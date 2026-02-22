@@ -11,7 +11,7 @@ import typer
 from . import render, storage
 from .models import TaskError, TaskValidationError
 from .service import TaskService
-from .tui import choose_task, create_form, show_board, update_form
+from .tui import choose_command, choose_task, create_form, show_board, update_form
 
 app = typer.Typer(help="Human-readable and agent-readable task manager")
 
@@ -83,6 +83,39 @@ def _run_and_handle(fn) -> None:
     except TaskError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
+
+
+def _command_choices() -> list[tuple[str, str]]:
+    choices: list[tuple[str, str]] = []
+    for command in app.registered_commands:
+        if not command.name or command.callback is None:
+            continue
+        doc = (command.callback.__doc__ or "").strip()
+        summary = doc.splitlines()[0] if doc else ""
+        choices.append((command.name, summary))
+    return choices
+
+
+@app.callback(invoke_without_command=True)
+def root_callback(ctx: typer.Context) -> None:
+    """Open an interactive command picker when no command is provided."""
+    if ctx.invoked_subcommand is not None:
+        return
+
+    choices = _command_choices()
+    if _can_interact():
+        selected = choose_command(choices, title="Select a dot-tasks command")
+        if not selected:
+            raise typer.Exit(code=1)
+        for command in app.registered_commands:
+            if command.name == selected and command.callback is not None:
+                ctx.invoke(command.callback)
+                return
+        raise typer.Exit(code=1)
+
+    typer.echo(ctx.get_help())
+    typer.echo("Error: command selection requires an interactive terminal.", err=True)
+    raise typer.Exit(code=2)
 
 
 @app.command("init")

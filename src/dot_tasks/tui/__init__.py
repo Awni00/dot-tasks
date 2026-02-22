@@ -40,6 +40,34 @@ def choose_task(tasks: list[Task], title: str = "Select task") -> str | None:
     return None
 
 
+def choose_command(commands: list[tuple[str, str]], title: str = "Select command") -> str | None:
+    if not commands:
+        return None
+    if _has_textual() and sys.stdin.isatty() and sys.stdout.isatty():
+        selected = _choose_command_textual(commands, title=title)
+        if selected:
+            return selected
+
+    typer.echo("")
+    typer.echo("dot-tasks command palette")
+    typer.echo("=" * 72)
+    typer.echo(title)
+    typer.echo("-" * 72)
+    for idx, (name, summary) in enumerate(commands, start=1):
+        typer.echo(f"{idx:>2}. {name:<8}  {summary}")
+    typer.echo(" 0. cancel")
+    raw = typer.prompt("Enter number", default="1")
+    try:
+        index = int(raw)
+    except ValueError:
+        return None
+    if index == 0:
+        return None
+    if 1 <= index <= len(commands):
+        return commands[index - 1][0]
+    return None
+
+
 def create_form(default_name: str | None = None) -> dict[str, Any] | None:
     if _has_textual() and sys.stdin.isatty() and sys.stdout.isatty():
         result = _create_form_textual(default_name=default_name)
@@ -120,6 +148,70 @@ def _choose_task_textual(tasks: list[Task], title: str) -> str | None:
             self.exit(None)
 
     return PickerApp().run()
+
+
+def _choose_command_textual(commands: list[tuple[str, str]], title: str) -> str | None:
+    from textual.app import App, ComposeResult
+    from textual.containers import Container
+    from textual.widgets import Footer, Header, OptionList, Static
+    from textual.widgets.option_list import Option
+
+    class CommandPickerApp(App[str | None]):
+        CSS = """
+        Screen {
+            background: #11151d;
+            align: center middle;
+        }
+        #card {
+            width: 92;
+            max-width: 95%;
+            border: round #4f8cff;
+            background: #171c26;
+            padding: 1 2;
+        }
+        #brand {
+            color: #7fb0ff;
+            text-style: bold;
+            margin-bottom: 1;
+        }
+        #title {
+            margin-bottom: 1;
+            text-style: bold;
+        }
+        #picker {
+            height: 12;
+            border: round #2d3a52;
+            margin-bottom: 1;
+        }
+        #hint {
+            color: #99a3b8;
+        }
+        """
+        BINDINGS = [("escape", "cancel", "Cancel")]
+
+        def compose(self) -> ComposeResult:
+            yield Header(show_clock=False)
+            with Container(id="card"):
+                yield Static("dot-tasks", id="brand")
+                yield Static(title, id="title")
+                options = [
+                    Option(f"{name:<8}  {summary}", id=name)
+                    for name, summary in commands
+                ]
+                yield OptionList(*options, id="picker")
+                yield Static("Use arrow keys to navigate, Enter to run, Esc to cancel.", id="hint")
+            yield Footer()
+
+        def on_mount(self) -> None:
+            self.query_one("#picker", OptionList).focus()
+
+        def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+            self.exit(str(event.option.id))
+
+        def action_cancel(self) -> None:
+            self.exit(None)
+
+    return CommandPickerApp().run()
 
 
 def _create_form_textual(default_name: str | None = None) -> dict[str, Any] | None:

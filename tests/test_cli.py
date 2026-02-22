@@ -197,3 +197,31 @@ def test_missing_selector_triggers_tui_picker(monkeypatch: pytest.MonkeyPatch, t
     result = runner.invoke(app, ["start", "--tasks-root", str(root)])
     assert result.exit_code == 0
     assert "Started: pick-me" in result.output
+
+
+def test_no_args_interactive_runs_selected_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr("dot_tasks.cli.choose_command", lambda commands, title: "init")
+
+    with runner.isolated_filesystem(temp_dir=str(tmp_path)):
+        result = runner.invoke(app, [])
+        assert result.exit_code == 0
+        assert "Initialized tasks root:" in result.output
+        assert (Path(".tasks") / "todo").is_dir()
+
+
+def test_no_args_interactive_cancel_exits_1(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr("dot_tasks.cli.choose_command", lambda commands, title: None)
+
+    result = runner.invoke(app, [])
+    assert result.exit_code == 1
+
+
+def test_no_args_non_interactive_prints_help_and_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: False)
+
+    result = runner.invoke(app, [])
+    assert result.exit_code == 2
+    assert "Usage:" in result.output
+    assert "interactive terminal" in result.output
