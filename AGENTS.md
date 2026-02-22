@@ -2,11 +2,11 @@
 
 ## Required Skill
 
-Use the local `dot-tasks` skill (`/Users/awni/Documents/project-code/dot-tasks/SKILL.md`) for structured task tracking.
+Use the local `dot-tasks` skill (`SKILL.md`) for structured task tracking.
 
 ## When To Propose A Task
 
-If requested work is multi-file or likely to take more than 30 minutes, ask the user whether to create a `dot-tasks` task before implementation.
+If requested work is multi-file or likely to take more than 30 minutes, ask the user whether to create a `dot-tasks` task before implementation. A good heuristic for whether a task is large enough to warrant tracking is whether the user enters "plan mode", in which case this should be a question asked during planning.
 
 ## During Work
 
