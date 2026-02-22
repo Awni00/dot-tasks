@@ -68,6 +68,7 @@ Each task lives in `.tasks/<status-bucket>/<created-date>-<task_name>/` and cont
 - `task.md` (canonical metadata frontmatter + task body)
 - `activity.md` (append-only audit log)
 - `plan.md` (created when the task is started)
+- `config.yaml` (interactive mode preferences)
 
 ## Commands
 
@@ -81,9 +82,30 @@ Each task lives in `.tasks/<status-bucket>/<created-date>-<task_name>/` and cont
 - `dot-tasks rename <task_name> <new_task_name>`
 - `dot-tasks delete <task_name> [--hard]`
 
-Running `dot-tasks` with no command opens an interactive command palette in TTY shells. In non-interactive shells, dot-tasks prints help plus an explicit error and exits non-zero.
+### Interaction Modes
 
-When selectors or metadata are missing in an interactive shell, dot-tasks opens a Textual UI when available and falls back to prompt dialogs otherwise.
+`dot-tasks` supports explicit interaction mode selection with `--mode off|prompt|full`:
+
+- `off`: non-interactive only
+- `prompt`: interactive prompt menus/forms
+- `full`: full-screen Textual UI when available (falls back to prompt)
+
+Mode precedence:
+
+- CLI `--mode` override wins.
+- Otherwise, `.tasks/config.yaml` value is used (`settings.interactive_mode`).
+- Invalid config values produce a warning and fall back to `prompt`.
+
+`dot-tasks init` creates `.tasks/config.yaml`. In interactive terminals it asks for mode; in non-interactive contexts it defaults to `prompt`.
+
+Behavior:
+
+- `dot-tasks` (no command):
+  - `prompt`/`full`: opens interactive command shell
+  - `off`: prints help + explicit error and exits non-zero
+- `dot-tasks <command>`:
+  - if required args are missing and mode is `prompt` or `full`, opens interactive command flow and exits after completion
+  - if required args are provided, runs non-interactive command path
 
 ## Interactive Demo
 

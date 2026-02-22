@@ -6,7 +6,7 @@ from dataclasses import fields
 import datetime as dt
 from pathlib import Path
 import shutil
-from typing import Any
+from typing import Any, Callable
 
 import yaml
 
@@ -20,6 +20,8 @@ from .models import (
 
 
 TASK_META_KEYS = [f.name for f in fields(TaskMetadata)]
+INTERACTIVE_MODES = ("off", "prompt", "full")
+DEFAULT_INTERACTIVE_MODE = "prompt"
 
 
 def find_repo_root(start: Path) -> Path | None:
@@ -57,6 +59,68 @@ def default_init_root(start: Path) -> Path:
 def ensure_layout(tasks_root: Path) -> None:
     for name in ("todo", "doing", "done", "trash"):
         (tasks_root / name).mkdir(parents=True, exist_ok=True)
+
+
+def config_path(tasks_root: Path) -> Path:
+    return tasks_root / "config.yaml"
+
+
+def default_config(mode: str = DEFAULT_INTERACTIVE_MODE) -> dict[str, Any]:
+    return {
+        "settings": {
+            "interactive_mode": mode,
+        }
+    }
+
+
+def write_default_config_if_missing(tasks_root: Path, mode: str = DEFAULT_INTERACTIVE_MODE) -> bool:
+    path = config_path(tasks_root)
+    if path.exists():
+        return False
+    payload = yaml.safe_dump(default_config(mode), sort_keys=False, default_flow_style=False)
+    path.write_text(payload, encoding="utf-8")
+    return True
+
+
+def read_config(tasks_root: Path, warn: Callable[[str], None] | None = None) -> dict[str, Any]:
+    path = config_path(tasks_root)
+    if not path.exists():
+        return {}
+    try:
+        payload = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except Exception:
+        if warn is not None:
+            warn(f"Unable to parse config at {path}. Falling back to defaults.")
+        return {}
+    if not isinstance(payload, dict):
+        if warn is not None:
+            warn(f"Invalid config format at {path}. Falling back to defaults.")
+        return {}
+    return payload
+
+
+def resolve_interactive_mode(tasks_root: Path, warn: Callable[[str], None] | None = None) -> str:
+    data = read_config(tasks_root, warn=warn)
+    settings = data.get("settings", {})
+    mode = settings.get("interactive_mode") if isinstance(settings, dict) else None
+    if mode is None:
+        return DEFAULT_INTERACTIVE_MODE
+    if not isinstance(mode, str):
+        if warn is not None:
+            warn(
+                f"Invalid settings.interactive_mode in {config_path(tasks_root)}. "
+                f"Using default '{DEFAULT_INTERACTIVE_MODE}'."
+            )
+        return DEFAULT_INTERACTIVE_MODE
+    normalized = mode.strip().lower()
+    if normalized not in INTERACTIVE_MODES:
+        if warn is not None:
+            warn(
+                f"Unknown interactive mode '{mode}' in {config_path(tasks_root)}. "
+                f"Using default '{DEFAULT_INTERACTIVE_MODE}'."
+            )
+        return DEFAULT_INTERACTIVE_MODE
+    return normalized
 
 
 def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:

@@ -27,6 +27,10 @@ def _task_dir(tasks_root: Path, bucket: str, task_name: str) -> Path:
     return tasks_root / bucket / f"{today}-{task_name}"
 
 
+def _read_config(path: Path) -> dict:
+    return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
 def test_init_idempotent(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     r1 = runner.invoke(app, ["init", "--tasks-root", str(root)])
@@ -37,13 +41,32 @@ def test_init_idempotent(tmp_path: Path) -> None:
     assert (root / "doing").is_dir()
     assert (root / "done").is_dir()
     assert (root / "trash").is_dir()
+    cfg = _read_config(root / "config.yaml")
+    assert cfg["settings"]["interactive_mode"] == "prompt"
+
+
+def test_init_mode_override_creates_config(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    result = runner.invoke(app, ["init", "--tasks-root", str(root), "--mode", "off"])
+    assert result.exit_code == 0
+    cfg = _read_config(root / "config.yaml")
+    assert cfg["settings"]["interactive_mode"] == "off"
+
+
+def test_init_does_not_overwrite_existing_config(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root), "--mode", "off"])
+    result = runner.invoke(app, ["init", "--tasks-root", str(root), "--mode", "full"])
+    assert result.exit_code == 0
+    cfg = _read_config(root / "config.yaml")
+    assert cfg["settings"]["interactive_mode"] == "off"
 
 
 def test_create_rejects_duplicate_name(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
-    r1 = runner.invoke(app, ["create", "a-task", "--tasks-root", str(root), "--no-interactive"])
-    r2 = runner.invoke(app, ["create", "a-task", "--tasks-root", str(root), "--no-interactive"])
+    r1 = runner.invoke(app, ["create", "a-task", "--tasks-root", str(root)])
+    r2 = runner.invoke(app, ["create", "a-task", "--tasks-root", str(root)])
     assert r1.exit_code == 0
     assert r2.exit_code == 1
     assert "already exists" in r2.output
@@ -65,7 +88,6 @@ def test_create_writes_task_and_activity(tmp_path: Path) -> None:
             "l",
             "--tasks-root",
             str(root),
-            "--no-interactive",
         ],
     )
     assert result.exit_code == 0
@@ -81,10 +103,10 @@ def test_create_writes_task_and_activity(tmp_path: Path) -> None:
 def test_start_blocks_unmet_dependencies_without_force(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "dep", "--tasks-root", str(root), "--no-interactive"])
+    runner.invoke(app, ["create", "dep", "--tasks-root", str(root)])
     result = runner.invoke(
         app,
-        ["create", "main", "--depends-on", "dep", "--tasks-root", str(root), "--no-interactive"],
+        ["create", "main", "--depends-on", "dep", "--tasks-root", str(root)],
     )
     assert result.exit_code == 0
     blocked = runner.invoke(app, ["start", "main", "--tasks-root", str(root)])
@@ -95,7 +117,7 @@ def test_start_blocks_unmet_dependencies_without_force(tmp_path: Path) -> None:
 def test_start_creates_plan_md(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "plan-task", "--tasks-root", str(root), "--no-interactive"])
+    runner.invoke(app, ["create", "plan-task", "--tasks-root", str(root)])
     result = runner.invoke(app, ["start", "plan-task", "--tasks-root", str(root)])
     assert result.exit_code == 0
     doing_dir = _task_dir(root, "doing", "plan-task")
@@ -105,7 +127,7 @@ def test_start_creates_plan_md(tmp_path: Path) -> None:
 def test_complete_moves_and_sets_date(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "done-task", "--tasks-root", str(root), "--no-interactive"])
+    runner.invoke(app, ["create", "done-task", "--tasks-root", str(root)])
     result = runner.invoke(app, ["complete", "done-task", "--tasks-root", str(root)])
     assert result.exit_code == 0
     done_dir = _task_dir(root, "done", "done-task")
@@ -117,8 +139,8 @@ def test_complete_moves_and_sets_date(tmp_path: Path) -> None:
 def test_rename_preserves_dependencies_by_task_id(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "base", "--tasks-root", str(root), "--no-interactive"])
-    runner.invoke(app, ["create", "child", "--depends-on", "base", "--tasks-root", str(root), "--no-interactive"])
+    runner.invoke(app, ["create", "base", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "child", "--depends-on", "base", "--tasks-root", str(root)])
 
     base_meta, _ = _read_task_md(_task_dir(root, "todo", "base") / "task.md")
     base_id = base_meta["task_id"]
@@ -133,8 +155,8 @@ def test_rename_preserves_dependencies_by_task_id(tmp_path: Path) -> None:
 def test_view_renders_dependencies_as_name_and_id(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "dep-view", "--tasks-root", str(root), "--no-interactive"])
-    runner.invoke(app, ["create", "task-view", "--depends-on", "dep-view", "--tasks-root", str(root), "--no-interactive"])
+    runner.invoke(app, ["create", "dep-view", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "task-view", "--depends-on", "dep-view", "--tasks-root", str(root)])
     dep_meta, _ = _read_task_md(_task_dir(root, "todo", "dep-view") / "task.md")
     dep_id = dep_meta["task_id"]
 
@@ -146,8 +168,8 @@ def test_view_renders_dependencies_as_name_and_id(tmp_path: Path) -> None:
 def test_list_grouped_sorted(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "a", "--priority", "p2", "--tasks-root", str(root), "--no-interactive"])
-    runner.invoke(app, ["create", "b", "--priority", "p0", "--tasks-root", str(root), "--no-interactive"])
+    runner.invoke(app, ["create", "a", "--priority", "p2", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "b", "--priority", "p0", "--tasks-root", str(root)])
     runner.invoke(app, ["start", "a", "--tasks-root", str(root)])
     result = runner.invoke(app, ["list", "--tasks-root", str(root)])
     assert result.exit_code == 0
@@ -164,7 +186,7 @@ def test_subdirectory_discovers_root(tmp_path: Path) -> None:
     nested.mkdir(parents=True)
     root = repo / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "root-task", "--tasks-root", str(root), "--no-interactive"])
+    runner.invoke(app, ["create", "root-task", "--tasks-root", str(root)])
 
     with runner.isolated_filesystem(temp_dir=str(nested)):
         result = runner.invoke(app, ["list"])
@@ -175,12 +197,12 @@ def test_subdirectory_discovers_root(tmp_path: Path) -> None:
 def test_delete_soft_and_hard(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "to-trash", "--tasks-root", str(root), "--no-interactive"])
+    runner.invoke(app, ["create", "to-trash", "--tasks-root", str(root)])
     soft = runner.invoke(app, ["delete", "to-trash", "--tasks-root", str(root)])
     assert soft.exit_code == 0
     assert any((root / "trash").iterdir())
 
-    runner.invoke(app, ["create", "to-hard", "--tasks-root", str(root), "--no-interactive"])
+    runner.invoke(app, ["create", "to-hard", "--tasks-root", str(root)])
     hard = runner.invoke(app, ["delete", "to-hard", "--tasks-root", str(root), "--hard"])
     assert hard.exit_code == 0
     assert not (_task_dir(root, "todo", "to-hard")).exists()
@@ -189,10 +211,10 @@ def test_delete_soft_and_hard(tmp_path: Path) -> None:
 def test_missing_selector_triggers_tui_picker(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "pick-me", "--tasks-root", str(root), "--no-interactive"])
+    runner.invoke(app, ["create", "pick-me", "--tasks-root", str(root)])
 
     monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
-    monkeypatch.setattr("dot_tasks.cli.choose_task", lambda tasks, title: "pick-me")
+    monkeypatch.setattr("dot_tasks.cli.choose_task", lambda tasks, title, mode: "pick-me")
 
     result = runner.invoke(app, ["start", "--tasks-root", str(root)])
     assert result.exit_code == 0
@@ -201,18 +223,24 @@ def test_missing_selector_triggers_tui_picker(monkeypatch: pytest.MonkeyPatch, t
 
 def test_no_args_interactive_runs_selected_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
-    monkeypatch.setattr("dot_tasks.cli.choose_command", lambda commands, title: "init")
+    choices = iter(["init", None])
+    monkeypatch.setattr(
+        "dot_tasks.cli.choose_command",
+        lambda commands, title, mode: next(choices),
+    )
 
     with runner.isolated_filesystem(temp_dir=str(tmp_path)):
         result = runner.invoke(app, [])
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Initialized tasks root:" in result.output
         assert (Path(".tasks") / "todo").is_dir()
+        cfg = _read_config(Path(".tasks") / "config.yaml")
+        assert cfg["settings"]["interactive_mode"] == "prompt"
 
 
 def test_no_args_interactive_cancel_exits_1(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
-    monkeypatch.setattr("dot_tasks.cli.choose_command", lambda commands, title: None)
+    monkeypatch.setattr("dot_tasks.cli.choose_command", lambda commands, title, mode: None)
 
     result = runner.invoke(app, [])
     assert result.exit_code == 1
@@ -225,3 +253,68 @@ def test_no_args_non_interactive_prints_help_and_error(monkeypatch: pytest.Monke
     assert result.exit_code == 2
     assert "Usage:" in result.output
     assert "interactive terminal" in result.output
+
+
+def test_root_mode_off_prints_help_and_error(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    result = runner.invoke(app, ["--tasks-root", str(root), "--mode", "off"])
+    assert result.exit_code == 2
+    assert "interactive mode is disabled" in result.output
+
+
+def test_missing_required_arg_with_mode_off_errors(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    result = runner.invoke(app, ["create", "--tasks-root", str(root), "--mode", "off"])
+    assert result.exit_code == 1
+    assert "task_name is required in non-interactive mode" in result.output
+
+
+def test_invalid_config_mode_warns_and_falls_back(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    (root / "config.yaml").write_text(
+        "settings:\n  interactive_mode: broken\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["list", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert "Warning: Unknown interactive mode" in result.output
+
+
+def test_update_interactive_form_replaces_dependencies(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "dep-a", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "dep-b", "--tasks-root", str(root)])
+    runner.invoke(
+        app,
+        ["create", "main-task", "--depends-on", "dep-a", "--tasks-root", str(root)],
+    )
+
+    dep_b_meta, _ = _read_task_md(_task_dir(root, "todo", "dep-b") / "task.md")
+    dep_b_id = dep_b_meta["task_id"]
+
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr(
+        "dot_tasks.cli.update_form",
+        lambda task, dependency_options, mode: {
+            "priority": None,
+            "effort": None,
+            "owner": task.metadata.owner or "",
+            "tags": [],
+            "depends_on": [dep_b_id],
+            "replace_depends_on": True,
+            "note": "Replaced deps",
+        },
+    )
+
+    result = runner.invoke(app, ["update", "main-task", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    meta, _ = _read_task_md(_task_dir(root, "todo", "main-task") / "task.md")
+    assert meta["depends_on"] == [dep_b_id]

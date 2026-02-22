@@ -7,7 +7,7 @@ from typing import Any
 
 import typer
 
-from ..models import Task
+from ..models import Task, VALID_EFFORTS, VALID_PRIORITIES
 
 
 def _has_textual() -> bool:
@@ -19,10 +19,70 @@ def _has_textual() -> bool:
         return False
 
 
-def choose_task(tasks: list[Task], title: str = "Select task") -> str | None:
+def _use_textual(mode: str) -> bool:
+    return mode == "full" and _has_textual() and sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def _prompt_single_choice(title: str, options: list[tuple[str, str]], default_value: str) -> str:
+    typer.echo(title)
+    default_index = 1
+    for idx, (_, label) in enumerate(options, start=1):
+        typer.echo(f"{idx}. {label}")
+        if options[idx - 1][0] == default_value:
+            default_index = idx
+
+    while True:
+        raw = typer.prompt("Enter number", default=str(default_index))
+        try:
+            index = int(raw)
+        except ValueError:
+            typer.echo("Invalid selection. Enter a number.")
+            continue
+        if 1 <= index <= len(options):
+            return options[index - 1][0]
+        typer.echo("Selection out of range.")
+
+
+def _prompt_multi_choice(
+    title: str,
+    options: list[tuple[str, str]],
+    default_values: list[str] | None = None,
+) -> list[str]:
+    if not options:
+        return []
+    defaults = set(default_values or [])
+    typer.echo(title)
+    default_numbers: list[str] = []
+    for idx, (value, label) in enumerate(options, start=1):
+        mark = "x" if value in defaults else " "
+        typer.echo(f"{idx}. [{mark}] {label}")
+        if value in defaults:
+            default_numbers.append(str(idx))
+
+    while True:
+        raw = typer.prompt(
+            "Enter comma-separated numbers",
+            default=",".join(default_numbers),
+        ).strip()
+        if not raw:
+            return []
+        tokens = [token.strip() for token in raw.split(",") if token.strip()]
+        try:
+            indexes = [int(token) for token in tokens]
+        except ValueError:
+            typer.echo("Invalid selection. Use comma-separated numbers.")
+            continue
+        if any(index < 1 or index > len(options) for index in indexes):
+            typer.echo("Selection out of range.")
+            continue
+        selected = {index - 1 for index in indexes}
+        return [value for idx, (value, _) in enumerate(options) if idx in selected]
+
+
+def choose_task(tasks: list[Task], title: str = "Select task", mode: str = "prompt") -> str | None:
     if not tasks:
         return None
-    if _has_textual() and sys.stdin.isatty() and sys.stdout.isatty():
+    if _use_textual(mode):
         selected = _choose_task_textual(tasks, title=title)
         if selected:
             return selected
@@ -30,20 +90,27 @@ def choose_task(tasks: list[Task], title: str = "Select task") -> str | None:
     typer.echo(title)
     for idx, task in enumerate(tasks, start=1):
         typer.echo(f"{idx}. {task.metadata.task_name} ({task.metadata.task_id})")
+    typer.echo("0. cancel")
     raw = typer.prompt("Enter number", default="1")
     try:
         index = int(raw)
     except ValueError:
+        return None
+    if index == 0:
         return None
     if 1 <= index <= len(tasks):
         return tasks[index - 1].metadata.task_name
     return None
 
 
-def choose_command(commands: list[tuple[str, str]], title: str = "Select command") -> str | None:
+def choose_command(
+    commands: list[tuple[str, str]],
+    title: str = "Select command",
+    mode: str = "prompt",
+) -> str | None:
     if not commands:
         return None
-    if _has_textual() and sys.stdin.isatty() and sys.stdout.isatty():
+    if _use_textual(mode):
         selected = _choose_command_textual(commands, title=title)
         if selected:
             return selected
@@ -68,57 +135,92 @@ def choose_command(commands: list[tuple[str, str]], title: str = "Select command
     return None
 
 
-def create_form(default_name: str | None = None) -> dict[str, Any] | None:
-    if _has_textual() and sys.stdin.isatty() and sys.stdout.isatty():
-        result = _create_form_textual(default_name=default_name)
+def create_form(
+    default_name: str | None = None,
+    dependency_options: list[tuple[str, str]] | None = None,
+    mode: str = "prompt",
+) -> dict[str, Any] | None:
+    dep_options = dependency_options or []
+    if _use_textual(mode):
+        result = _create_form_textual(default_name=default_name, dependency_options=dep_options)
         if result is not None:
             return result
 
     task_name = typer.prompt("task_name", default=default_name or "")
-    priority = typer.prompt("priority (p0|p1|p2|p3)", default="p2")
-    effort = typer.prompt("effort (s|m|l|xl)", default="m")
+    priority = _prompt_single_choice(
+        "priority",
+        [(value, value) for value in VALID_PRIORITIES],
+        default_value="p2",
+    )
+    effort = _prompt_single_choice(
+        "effort",
+        [(value, value) for value in VALID_EFFORTS],
+        default_value="m",
+    )
     owner = typer.prompt("owner", default="")
     summary = typer.prompt("summary", default="")
     tags = typer.prompt("tags (comma separated)", default="")
-    depends_on = typer.prompt("depends_on task selectors (comma separated)", default="")
+    depends_on = _prompt_multi_choice(
+        "depends_on selectors",
+        dep_options,
+        default_values=[],
+    )
     return {
         "task_name": task_name.strip(),
-        "priority": priority.strip(),
-        "effort": effort.strip(),
+        "priority": priority,
+        "effort": effort,
         "owner": owner.strip() or None,
         "summary": summary.strip(),
         "tags": [t.strip() for t in tags.split(",") if t.strip()],
-        "depends_on": [d.strip() for d in depends_on.split(",") if d.strip()],
+        "depends_on": depends_on,
     }
 
 
-def update_form(task: Task) -> dict[str, Any] | None:
-    if _has_textual() and sys.stdin.isatty() and sys.stdout.isatty():
-        result = _update_form_textual(task)
+def update_form(
+    task: Task,
+    dependency_options: list[tuple[str, str]] | None = None,
+    mode: str = "prompt",
+) -> dict[str, Any] | None:
+    dep_options = dependency_options or []
+    if _use_textual(mode):
+        result = _update_form_textual(task, dep_options)
         if result is not None:
             return result
 
-    priority = typer.prompt("priority (blank to keep)", default="")
-    effort = typer.prompt("effort (blank to keep)", default="")
+    priority = _prompt_single_choice(
+        "priority",
+        [("__keep__", "Keep current"), *[(value, value) for value in VALID_PRIORITIES]],
+        default_value="__keep__",
+    )
+    effort = _prompt_single_choice(
+        "effort",
+        [("__keep__", "Keep current"), *[(value, value) for value in VALID_EFFORTS]],
+        default_value="__keep__",
+    )
     owner = typer.prompt("owner (blank to keep)", default=task.metadata.owner or "")
     tags = typer.prompt("add tags (comma separated, blank none)", default="")
-    depends_on = typer.prompt("add depends_on selectors (comma separated)", default="")
+    depends_on = _prompt_multi_choice(
+        "depends_on selectors (replaces current selection)",
+        dep_options,
+        default_values=task.metadata.depends_on,
+    )
     note = typer.prompt("update note", default="Task metadata updated")
     return {
-        "priority": priority.strip() or None,
-        "effort": effort.strip() or None,
+        "priority": None if priority == "__keep__" else priority,
+        "effort": None if effort == "__keep__" else effort,
         "owner": owner,
         "tags": [t.strip() for t in tags.split(",") if t.strip()],
-        "depends_on": [d.strip() for d in depends_on.split(",") if d.strip()],
+        "depends_on": depends_on,
+        "replace_depends_on": True,
         "note": note.strip(),
     }
 
 
-def show_board(tasks: list[Task]) -> None:
-    if _has_textual() and sys.stdin.isatty() and sys.stdout.isatty():
+def show_board(tasks: list[Task], mode: str = "prompt") -> None:
+    if _use_textual(mode):
         _show_board_textual(tasks)
         return
-    typer.echo("Textual board unavailable; showing plain list instead.")
+    typer.echo("Interactive board unavailable; showing plain list instead.")
     for task in tasks:
         typer.echo(f"- {task.metadata.status}: {task.metadata.task_name} ({task.metadata.task_id})")
 
@@ -194,10 +296,7 @@ def _choose_command_textual(commands: list[tuple[str, str]], title: str) -> str 
             with Container(id="card"):
                 yield Static("dot-tasks", id="brand")
                 yield Static(title, id="title")
-                options = [
-                    Option(f"{name:<8}  {summary}", id=name)
-                    for name, summary in commands
-                ]
+                options = [Option(f"{name:<8}  {summary}", id=name) for name, summary in commands]
                 yield OptionList(*options, id="picker")
                 yield Static("Use arrow keys to navigate, Enter to run, Esc to cancel.", id="hint")
             yield Footer()
@@ -214,10 +313,15 @@ def _choose_command_textual(commands: list[tuple[str, str]], title: str) -> str 
     return CommandPickerApp().run()
 
 
-def _create_form_textual(default_name: str | None = None) -> dict[str, Any] | None:
+def _create_form_textual(
+    default_name: str | None = None,
+    dependency_options: list[tuple[str, str]] | None = None,
+) -> dict[str, Any] | None:
     from textual.app import App, ComposeResult
-    from textual.containers import Vertical
-    from textual.widgets import Footer, Header, Input, Static
+    from textual.containers import VerticalScroll
+    from textual.widgets import Checkbox, Footer, Header, Input, Select, Static
+
+    dep_options = dependency_options or []
 
     class CreateApp(App[dict[str, Any] | None]):
         BINDINGS = [("ctrl+s", "submit", "Submit"), ("escape", "cancel", "Cancel")]
@@ -225,23 +329,38 @@ def _create_form_textual(default_name: str | None = None) -> dict[str, Any] | No
         def compose(self) -> ComposeResult:
             yield Header()
             yield Static("Create Task (Ctrl+S to submit)")
-            with Vertical():
+            with VerticalScroll():
                 yield Input(value=default_name or "", id="task_name", placeholder="task_name")
-                yield Input(value="p2", id="priority", placeholder="priority")
-                yield Input(value="m", id="effort", placeholder="effort")
+                yield Select(
+                    [(value, value) for value in VALID_PRIORITIES],
+                    value="p2",
+                    id="priority",
+                    prompt="priority",
+                )
+                yield Select(
+                    [(value, value) for value in VALID_EFFORTS],
+                    value="m",
+                    id="effort",
+                    prompt="effort",
+                )
                 yield Input(value="", id="owner", placeholder="owner")
                 yield Input(value="", id="summary", placeholder="summary")
                 yield Input(value="", id="tags", placeholder="tags comma-separated")
-                yield Input(value="", id="depends_on", placeholder="depends_on selectors")
+                yield Static("depends_on")
+                for idx, (_, label) in enumerate(dep_options):
+                    yield Checkbox(label, id=f"dep_{idx}")
             yield Footer()
 
         def action_submit(self) -> None:
-            task_name = self.query_one("#task_name", Input).value.strip()
+            selected_depends: list[str] = []
+            for idx, (value, _) in enumerate(dep_options):
+                if self.query_one(f"#dep_{idx}", Checkbox).value:
+                    selected_depends.append(value)
             self.exit(
                 {
-                    "task_name": task_name,
-                    "priority": self.query_one("#priority", Input).value.strip() or "p2",
-                    "effort": self.query_one("#effort", Input).value.strip() or "m",
+                    "task_name": self.query_one("#task_name", Input).value.strip(),
+                    "priority": str(self.query_one("#priority", Select).value or "p2"),
+                    "effort": str(self.query_one("#effort", Select).value or "m"),
                     "owner": self.query_one("#owner", Input).value.strip() or None,
                     "summary": self.query_one("#summary", Input).value.strip(),
                     "tags": [
@@ -249,11 +368,7 @@ def _create_form_textual(default_name: str | None = None) -> dict[str, Any] | No
                         for t in self.query_one("#tags", Input).value.split(",")
                         if t.strip()
                     ],
-                    "depends_on": [
-                        d.strip()
-                        for d in self.query_one("#depends_on", Input).value.split(",")
-                        if d.strip()
-                    ],
+                    "depends_on": selected_depends,
                 }
             )
 
@@ -263,42 +378,63 @@ def _create_form_textual(default_name: str | None = None) -> dict[str, Any] | No
     return CreateApp().run()
 
 
-def _update_form_textual(task: Task) -> dict[str, Any] | None:
+def _update_form_textual(
+    task: Task,
+    dependency_options: list[tuple[str, str]],
+) -> dict[str, Any] | None:
     from textual.app import App, ComposeResult
-    from textual.containers import Vertical
-    from textual.widgets import Footer, Header, Input, Static
+    from textual.containers import VerticalScroll
+    from textual.widgets import Checkbox, Footer, Header, Input, Select, Static
+
+    dep_defaults = set(task.metadata.depends_on)
+    keep_value = "__keep__"
 
     class UpdateApp(App[dict[str, Any] | None]):
         BINDINGS = [("ctrl+s", "submit", "Submit"), ("escape", "cancel", "Cancel")]
 
         def compose(self) -> ComposeResult:
             yield Header()
-            yield Static("Update Task (blank means keep current, Ctrl+S to submit)")
-            with Vertical():
-                yield Input(value="", id="priority", placeholder="priority")
-                yield Input(value="", id="effort", placeholder="effort")
+            yield Static("Update Task (Ctrl+S to submit)")
+            with VerticalScroll():
+                yield Select(
+                    [(keep_value, "Keep current"), *[(value, value) for value in VALID_PRIORITIES]],
+                    value=keep_value,
+                    id="priority",
+                    prompt="priority",
+                )
+                yield Select(
+                    [(keep_value, "Keep current"), *[(value, value) for value in VALID_EFFORTS]],
+                    value=keep_value,
+                    id="effort",
+                    prompt="effort",
+                )
                 yield Input(value=task.metadata.owner or "", id="owner", placeholder="owner")
                 yield Input(value="", id="tags", placeholder="add tags comma-separated")
-                yield Input(value="", id="depends_on", placeholder="add depends_on selectors")
+                yield Static("depends_on (replaces current selection)")
+                for idx, (value, label) in enumerate(dependency_options):
+                    yield Checkbox(label, value=value in dep_defaults, id=f"dep_{idx}")
                 yield Input(value="Task metadata updated", id="note", placeholder="activity note")
             yield Footer()
 
         def action_submit(self) -> None:
+            selected_depends: list[str] = []
+            for idx, (value, _) in enumerate(dependency_options):
+                if self.query_one(f"#dep_{idx}", Checkbox).value:
+                    selected_depends.append(value)
+            priority = str(self.query_one("#priority", Select).value or keep_value)
+            effort = str(self.query_one("#effort", Select).value or keep_value)
             self.exit(
                 {
-                    "priority": self.query_one("#priority", Input).value.strip() or None,
-                    "effort": self.query_one("#effort", Input).value.strip() or None,
+                    "priority": None if priority == keep_value else priority,
+                    "effort": None if effort == keep_value else effort,
                     "owner": self.query_one("#owner", Input).value,
                     "tags": [
                         t.strip()
                         for t in self.query_one("#tags", Input).value.split(",")
                         if t.strip()
                     ],
-                    "depends_on": [
-                        d.strip()
-                        for d in self.query_one("#depends_on", Input).value.split(",")
-                        if d.strip()
-                    ],
+                    "depends_on": selected_depends,
+                    "replace_depends_on": True,
                     "note": self.query_one("#note", Input).value.strip(),
                 }
             )

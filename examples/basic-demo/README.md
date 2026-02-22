@@ -16,6 +16,8 @@ pip install -e .
 cd examples/basic-demo
 ```
 
+The first `dot-tasks init` in a new workspace writes `.tasks/config.yaml` with interactive mode preferences (`off|prompt|full`).
+
 ## Inspect Preloaded State
 
 **List tasks in `.tasks/`**
@@ -118,7 +120,7 @@ bootstrap-dot-tasks     t-20260201-001  completed  p1  m  ready  2026-02-01
 ## Create + Rename + Delete Demo
 
 ```bash
-dot-tasks create prepare-release-notes --summary "Draft release notes" --priority p2 --effort s --no-interactive
+dot-tasks create prepare-release-notes --summary "Draft release notes" --priority p2 --effort s --mode off
 dot-tasks rename prepare-release-notes prepare-v1-release-notes
 dot-tasks delete prepare-v1-release-notes
 dot-tasks list --json
