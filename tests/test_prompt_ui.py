@@ -90,6 +90,70 @@ def test_create_form_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> Non
     assert prompt_ui.create_form(default_name="test-task") is None
 
 
+def test_create_form_dependency_gate_skips_selector_on_no(monkeypatch: pytest.MonkeyPatch) -> None:
+    choices = iter(["p2", "m"])
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(prompt_ui, "_prompt_yes_no", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        prompt_ui,
+        "_prompt_multi_choice",
+        lambda *args, **kwargs: pytest.fail("dependency selector should not be shown"),
+    )
+    monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: "")
+
+    payload = prompt_ui.create_form(
+        default_name="test-task",
+        dependency_options=[("t-1", "Task 1")],
+    )
+    assert payload is not None
+    assert payload["depends_on"] == []
+
+
+def test_create_form_dependency_gate_runs_selector_on_yes(monkeypatch: pytest.MonkeyPatch) -> None:
+    choices = iter(["p2", "m"])
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(prompt_ui, "_prompt_yes_no", lambda *args, **kwargs: True)
+    monkeypatch.setattr(prompt_ui, "_prompt_multi_choice", lambda *args, **kwargs: ["t-1"])
+    monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: "")
+
+    payload = prompt_ui.create_form(
+        default_name="test-task",
+        dependency_options=[("t-1", "Task 1")],
+    )
+    assert payload is not None
+    assert payload["depends_on"] == ["t-1"]
+
+
+def test_create_form_dependency_gate_skipped_when_no_candidates(monkeypatch: pytest.MonkeyPatch) -> None:
+    choices = iter(["p2", "m"])
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(
+        prompt_ui,
+        "_prompt_yes_no",
+        lambda *args, **kwargs: pytest.fail("dependency gate should not be shown"),
+    )
+    monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: "")
+
+    payload = prompt_ui.create_form(default_name="test-task", dependency_options=[])
+    assert payload is not None
+    assert payload["depends_on"] == []
+
+
+def test_create_form_cancel_at_dependency_gate_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    choices = iter(["p2", "m"])
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(prompt_ui, "_prompt_yes_no", lambda *args, **kwargs: None)
+    monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: "")
+
+    assert (
+        prompt_ui.create_form(
+            default_name="test-task",
+            dependency_options=[("t-1", "Task 1")],
+        )
+        is None
+    )
+
+
 def test_select_many_preserves_source_order(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(selector_ui, "_ensure_tty", lambda: None)
     monkeypatch.setattr(

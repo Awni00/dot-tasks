@@ -91,6 +91,29 @@ def _prompt_multi_choice(
         return [value for idx, (value, _) in enumerate(options) if idx in selected]
 
 
+def _prompt_yes_no(title: str, *, default: bool = False) -> bool | None:
+    options = [("yes", "Yes"), ("no", "No")]
+    default_value = "yes" if default else "no"
+    try:
+        selected = select_one(title, options, default_value=default_value)
+    except SelectorUnavailableError as exc:
+        _warn_selector_fallback(exc)
+    else:
+        if selected is None:
+            return None
+        return selected == "yes"
+
+    prompt_label = "y/N" if not default else "Y/n"
+    default_text = "y" if default else "n"
+    while True:
+        raw = typer.prompt(f"{title} ({prompt_label})", default=default_text).strip().lower()
+        if raw in {"y", "yes"}:
+            return True
+        if raw in {"n", "no"}:
+            return False
+        typer.echo("Invalid selection. Enter y or n.")
+
+
 def choose_task(tasks: list[Task], title: str = "Select task") -> str | None:
     if not tasks:
         return None
@@ -183,13 +206,23 @@ def create_form(
     owner = typer.prompt("owner", default="")
     summary = typer.prompt("summary", default="")
     tags = typer.prompt("tags (comma separated)", default="")
-    depends_on = _prompt_multi_choice(
-        "depends_on selectors",
-        dep_options,
-        default_values=[],
-    )
-    if depends_on is None:
-        return None
+    if not dep_options:
+        depends_on: list[str] = []
+    else:
+        should_set_depends = _prompt_yes_no("Set task dependencies?", default=False)
+        if should_set_depends is None:
+            return None
+        if should_set_depends:
+            selected_depends = _prompt_multi_choice(
+                "depends_on selectors",
+                dep_options,
+                default_values=[],
+            )
+            if selected_depends is None:
+                return None
+            depends_on = selected_depends
+        else:
+            depends_on = []
     return {
         "task_name": task_name.strip(),
         "priority": priority,

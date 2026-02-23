@@ -22,6 +22,7 @@ Interactive pickers support keyboard navigation in prompt mode:
 
 - `up/down` + `enter` for single selection
 - `space` to toggle multi-select options and `enter` to submit
+- in `dot-tasks create`, dependency selection is optional and only shown if you choose to set dependencies
 - if selector UI is unavailable, prompts automatically fall back to numeric entry
 
 ## Inspect Preloaded State
