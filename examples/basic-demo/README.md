@@ -23,6 +23,7 @@ Re-running interactive `dot-tasks init` updates those managed config values; `--
 Interactive pickers support keyboard navigation in prompt mode:
 
 - `up/down` + `enter` for single selection
+- task selectors support fuzzy search by typing
 - `space` to toggle multi-select options and `enter` to submit
 - in `dot-tasks create`, dependency selection is optional and only shown if you choose to set dependencies
 - if selector UI is unavailable, prompts automatically fall back to numeric entry

@@ -7,7 +7,7 @@ from typing import Any
 import typer
 
 from .models import Task, VALID_EFFORTS, VALID_PRIORITIES
-from .selector_ui import SelectorUnavailableError, select_many, select_one
+from .selector_ui import SelectorUnavailableError, select_fuzzy, select_many, select_one
 from . import storage
 
 
@@ -139,7 +139,7 @@ def choose_task(tasks: list[Task], title: str = "Select task") -> str | None:
         for task in tasks
     ]
     try:
-        selected = select_one(title, options, default_value=tasks[0].metadata.task_name)
+        selected = select_fuzzy(title, options)
     except SelectorUnavailableError as exc:
         _warn_selector_fallback(exc)
     else:

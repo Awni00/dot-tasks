@@ -65,6 +65,40 @@ def select_one(
     return str(result)
 
 
+def select_fuzzy(
+    title: str,
+    options: list[tuple[str, str]],
+    *,
+    default_value: str | None = None,
+) -> str | None:
+    """Return selected value from fuzzy prompt, None on cancel, or raise SelectorUnavailableError."""
+    _ensure_tty()
+    if not options:
+        return None
+
+    choices = [_SelectionOption(value=value, label=label) for value, label in options]
+    inquirer = _inquirer()
+    try:
+        result = inquirer.fuzzy(
+            message=title,
+            choices=[{"name": item.label, "value": item.value} for item in choices],
+            default=default_value,
+            vi_mode=False,
+            mandatory=False,
+            raise_keyboard_interrupt=True,
+        ).execute()
+    except KeyboardInterrupt:
+        return None
+    except EOFError:
+        return None
+    except Exception as exc:
+        raise SelectorUnavailableError("selector runtime failed") from exc
+
+    if result is None:
+        return None
+    return str(result)
+
+
 def select_many(
     title: str,
     options: list[tuple[str, str]],

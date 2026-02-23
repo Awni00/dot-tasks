@@ -21,16 +21,29 @@ class _FakePrompt:
 
 
 class _FakeInquirer:
-    def __init__(self, *, select_result=None, select_error: Exception | None = None, checkbox_result=None):
+    def __init__(
+        self,
+        *,
+        select_result=None,
+        select_error: Exception | None = None,
+        checkbox_result=None,
+        fuzzy_result=None,
+        fuzzy_error: Exception | None = None,
+    ):
         self.select_result = select_result
         self.select_error = select_error
         self.checkbox_result = checkbox_result
+        self.fuzzy_result = fuzzy_result
+        self.fuzzy_error = fuzzy_error
 
     def select(self, **kwargs):
         return _FakePrompt(result=self.select_result, error=self.select_error)
 
     def checkbox(self, **kwargs):
         return _FakePrompt(result=self.checkbox_result)
+
+    def fuzzy(self, **kwargs):
+        return _FakePrompt(result=self.fuzzy_result, error=self.fuzzy_error)
 
 
 def _task(name: str, task_id: str = "t-20260201-001") -> Task:
@@ -71,10 +84,43 @@ def test_choose_command_falls_back_to_numeric_on_selector_unavailable(
 
 
 def test_choose_task_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(prompt_ui, "select_one", lambda title, options, default_value=None: None)
+    monkeypatch.setattr(prompt_ui, "select_fuzzy", lambda title, options, default_value=None: None)
 
     selected = prompt_ui.choose_task([_task("alpha")])
     assert selected is None
+
+
+def test_choose_task_uses_fuzzy_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(prompt_ui, "select_fuzzy", lambda title, options, default_value=None: "alpha")
+    monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: pytest.fail("numeric prompt used"))
+    selected = prompt_ui.choose_task([_task("alpha")])
+    assert selected == "alpha"
+
+
+def test_choose_task_fuzzy_default_is_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def _select_fuzzy(title, options, default_value=None):
+        captured["default_value"] = default_value
+        return "alpha"
+
+    monkeypatch.setattr(prompt_ui, "select_fuzzy", _select_fuzzy)
+    selected = prompt_ui.choose_task([_task("alpha")])
+    assert selected == "alpha"
+    assert captured["default_value"] is None
+
+
+def test_choose_task_fuzzy_failure_falls_back_to_numeric(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        prompt_ui,
+        "select_fuzzy",
+        lambda title, options, default_value=None: (_ for _ in ()).throw(
+            selector_ui.SelectorUnavailableError("selector runtime failed")
+        ),
+    )
+    monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: "1")
+    selected = prompt_ui.choose_task([_task("alpha")], title="Select task")
+    assert selected == "alpha"
 
 
 def test_init_config_form_uses_selector_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -308,6 +354,29 @@ def test_select_many_preserves_source_order(monkeypatch: pytest.MonkeyPatch) -> 
         [("a", "Task A"), ("b", "Task B")],
     )
     assert values == ["a", "b"]
+
+
+def test_select_fuzzy_keyboard_interrupt_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(selector_ui, "_ensure_tty", lambda: None)
+    monkeypatch.setattr(
+        selector_ui,
+        "_inquirer",
+        lambda: _FakeInquirer(fuzzy_error=KeyboardInterrupt()),
+    )
+
+    assert selector_ui.select_fuzzy("pick", [("a", "A")]) is None
+
+
+def test_select_fuzzy_runtime_error_raises_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(selector_ui, "_ensure_tty", lambda: None)
+    monkeypatch.setattr(
+        selector_ui,
+        "_inquirer",
+        lambda: _FakeInquirer(fuzzy_error=RuntimeError("boom")),
+    )
+
+    with pytest.raises(selector_ui.SelectorUnavailableError):
+        selector_ui.select_fuzzy("pick", [("a", "A")])
 
 
 def test_select_one_keyboard_interrupt_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
