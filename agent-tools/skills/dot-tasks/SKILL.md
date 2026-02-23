@@ -1,11 +1,11 @@
 ---
 name: dot-tasks
-description: Use the dot-tasks CLI/TUI to create, manage, and track structured tasks in `.tasks/` so work is auditable for humans and AI agents.
+description: Reference skill for users integrating dot-tasks into AI coding agents. Use the dot-tasks CLI to create, manage, and track structured tasks in `.tasks/` so work stays auditable for humans and agents.
 ---
 
 # dot-tasks Skill
 
-Use this skill whenever task lifecycle tracking is required.
+Use this skill whenever task lifecycle tracking is required in a repository that uses `dot-tasks`.
 
 ## Workflow
 

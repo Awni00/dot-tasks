@@ -1,8 +1,10 @@
+> Reference snippet for package users: this file is meant to be copied/adapted into other repositories that use `dot-tasks`.
+
 # Agent Task Tracking Policy
 
 ## Required Skill
 
-Use the local `dot-tasks` skill (`SKILL.md`) for structured task tracking.
+Use the local `dot-tasks` skill (`skills/dot-tasks/SKILL.md`) for structured task tracking.
 
 ## When To Propose A Task
 
