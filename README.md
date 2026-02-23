@@ -1,8 +1,8 @@
 <p align="center">
   <picture>
-    <source srcset="assets/logo/svg/banner-dark.svg" media="(prefers-color-scheme: dark)">
-    <source srcset="assets/logo/svg/banner-light.svg" media="(prefers-color-scheme: light)">
-    <img src="assets/logo/svg/banner-light.svg" alt="dot-tasks logo">
+    <source srcset="https://raw.githubusercontent.com/Awni00/dot-tasks/main/assets/logo/svg/banner-dark.svg" media="(prefers-color-scheme: dark)">
+    <source srcset="https://raw.githubusercontent.com/Awni00/dot-tasks/main/assets/logo/svg/banner-light.svg" media="(prefers-color-scheme: light)">
+    <img src="https://raw.githubusercontent.com/Awni00/dot-tasks/main/assets/logo/svg/banner-light.svg" alt="dot-tasks logo">
   </picture>
 </p>
 
