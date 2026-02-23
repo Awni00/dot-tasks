@@ -1,6 +1,6 @@
 settings:
   interactive_enabled: true
-  show_banner: false
+  show_banner: true
   list_table:
     columns:
     - name: task_name
