@@ -35,6 +35,7 @@ class _FakeInquirer:
         self.checkbox_result = checkbox_result
         self.fuzzy_result = fuzzy_result
         self.fuzzy_error = fuzzy_error
+        self.last_fuzzy_kwargs = None
 
     def select(self, **kwargs):
         return _FakePrompt(result=self.select_result, error=self.select_error)
@@ -43,6 +44,7 @@ class _FakeInquirer:
         return _FakePrompt(result=self.checkbox_result)
 
     def fuzzy(self, **kwargs):
+        self.last_fuzzy_kwargs = kwargs
         return _FakePrompt(result=self.fuzzy_result, error=self.fuzzy_error)
 
 
@@ -283,7 +285,7 @@ def test_create_form_dependency_gate_skips_selector_on_no(monkeypatch: pytest.Mo
     monkeypatch.setattr(prompt_ui, "_prompt_yes_no", lambda *args, **kwargs: False)
     monkeypatch.setattr(
         prompt_ui,
-        "_prompt_multi_choice",
+        "_prompt_depends_on_choice",
         lambda *args, **kwargs: pytest.fail("dependency selector should not be shown"),
     )
     monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: "")
@@ -300,7 +302,7 @@ def test_create_form_dependency_gate_runs_selector_on_yes(monkeypatch: pytest.Mo
     choices = iter(["p2", "m"])
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
     monkeypatch.setattr(prompt_ui, "_prompt_yes_no", lambda *args, **kwargs: True)
-    monkeypatch.setattr(prompt_ui, "_prompt_multi_choice", lambda *args, **kwargs: ["t-1"])
+    monkeypatch.setattr(prompt_ui, "_prompt_depends_on_choice", lambda *args, **kwargs: ["t-1"])
     monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: "")
 
     payload = prompt_ui.create_form(
@@ -356,6 +358,33 @@ def test_select_many_preserves_source_order(monkeypatch: pytest.MonkeyPatch) -> 
     assert values == ["a", "b"]
 
 
+def test_select_fuzzy_many_preserves_source_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(selector_ui, "_ensure_tty", lambda: None)
+    monkeypatch.setattr(
+        selector_ui,
+        "_inquirer",
+        lambda: _FakeInquirer(fuzzy_result=["b", "a"]),
+    )
+
+    values = selector_ui.select_fuzzy_many(
+        "depends_on",
+        [("a", "Task A"), ("b", "Task B")],
+    )
+    assert values == ["a", "b"]
+
+
+def test_select_fuzzy_many_binds_space_toggle(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(selector_ui, "_ensure_tty", lambda: None)
+    fake = _FakeInquirer(fuzzy_result=["a"])
+    monkeypatch.setattr(selector_ui, "_inquirer", lambda: fake)
+
+    values = selector_ui.select_fuzzy_many("depends_on", [("a", "Task A")])
+    assert values == ["a"]
+    assert fake.last_fuzzy_kwargs is not None
+    assert fake.last_fuzzy_kwargs["instruction"] == "(space/tab to toggle, enter to submit, ctrl-c to cancel)"
+    assert fake.last_fuzzy_kwargs["keybindings"]["toggle"] == [{"key": "space"}]
+
+
 def test_select_fuzzy_keyboard_interrupt_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(selector_ui, "_ensure_tty", lambda: None)
     monkeypatch.setattr(
@@ -365,6 +394,17 @@ def test_select_fuzzy_keyboard_interrupt_returns_none(monkeypatch: pytest.Monkey
     )
 
     assert selector_ui.select_fuzzy("pick", [("a", "A")]) is None
+
+
+def test_select_fuzzy_many_keyboard_interrupt_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(selector_ui, "_ensure_tty", lambda: None)
+    monkeypatch.setattr(
+        selector_ui,
+        "_inquirer",
+        lambda: _FakeInquirer(fuzzy_error=KeyboardInterrupt()),
+    )
+
+    assert selector_ui.select_fuzzy_many("pick", [("a", "A")]) is None
 
 
 def test_select_fuzzy_runtime_error_raises_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -377,6 +417,18 @@ def test_select_fuzzy_runtime_error_raises_unavailable(monkeypatch: pytest.Monke
 
     with pytest.raises(selector_ui.SelectorUnavailableError):
         selector_ui.select_fuzzy("pick", [("a", "A")])
+
+
+def test_select_fuzzy_many_runtime_error_raises_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(selector_ui, "_ensure_tty", lambda: None)
+    monkeypatch.setattr(
+        selector_ui,
+        "_inquirer",
+        lambda: _FakeInquirer(fuzzy_error=RuntimeError("boom")),
+    )
+
+    with pytest.raises(selector_ui.SelectorUnavailableError):
+        selector_ui.select_fuzzy_many("pick", [("a", "A")])
 
 
 def test_select_one_keyboard_interrupt_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -424,6 +476,44 @@ def test_numeric_multi_choice_cancel_returns_none(monkeypatch: pytest.MonkeyPatc
     )
     monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: None)
     assert prompt_ui._prompt_multi_choice("depends_on", [("t1", "Task 1")]) is None
+
+
+def test_depends_on_choice_fuzzy_failure_falls_back_to_numeric(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        prompt_ui,
+        "select_fuzzy_many",
+        lambda title, options, default_values=None: (_ for _ in ()).throw(
+            selector_ui.SelectorUnavailableError("fallback")
+        ),
+    )
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: "2,1")
+    values = prompt_ui._prompt_depends_on_choice("depends_on", [("a", "Task A"), ("b", "Task B")])
+    assert values == ["a", "b"]
+
+
+def test_depends_on_choice_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(prompt_ui, "select_fuzzy_many", lambda *args, **kwargs: None)
+    assert prompt_ui._prompt_depends_on_choice("depends_on", [("a", "Task A")]) is None
+
+
+def test_update_form_depends_on_uses_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    choices = iter(["__keep__", "__keep__"])
+    captured: dict[str, object] = {}
+
+    def _depends(title, options, default_values=None):
+        captured["defaults"] = default_values
+        return ["t-2"]
+
+    task = _task("alpha")
+    task.metadata.depends_on = ["t-1"]
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: "")
+    monkeypatch.setattr(prompt_ui, "_prompt_depends_on_choice", _depends)
+
+    payload = prompt_ui.update_form(task, dependency_options=[("t-1", "Task 1"), ("t-2", "Task 2")])
+    assert payload is not None
+    assert captured["defaults"] == ["t-1"]
+    assert payload["depends_on"] == ["t-2"]
 
 
 def test_yes_no_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:

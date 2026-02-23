@@ -99,6 +99,59 @@ def select_fuzzy(
     return str(result)
 
 
+def select_fuzzy_many(
+    title: str,
+    options: list[tuple[str, str]],
+    *,
+    default_values: list[str] | None = None,
+) -> list[str] | None:
+    """Return selected values from fuzzy multiselect in source order, or None on cancel."""
+    _ensure_tty()
+    if not options:
+        return []
+
+    defaults = set(default_values or [])
+    choices = [_SelectionOption(value=value, label=label) for value, label in options]
+    inquirer = _inquirer()
+    try:
+        selected = inquirer.fuzzy(
+            message=title,
+            choices=[
+                {
+                    "name": item.label,
+                    "value": item.value,
+                    "enabled": item.value in defaults,
+                }
+                for item in choices
+            ],
+            multiselect=True,
+            instruction="(space/tab to toggle, enter to submit, ctrl-c to cancel)",
+            marker="[x]",
+            marker_pl="[ ]",
+            # InquirerPy fuzzy prompt disables space-toggle by default so users can type
+            # spaces in the query; explicitly bind it for dependency multiselect UX.
+            keybindings={
+                "toggle": [{"key": "space"}],
+                "toggle-down": [{"key": "c-i"}],  # tab
+                "toggle-up": [{"key": "s-tab"}],
+            },
+            vi_mode=False,
+            mandatory=False,
+            raise_keyboard_interrupt=True,
+        ).execute()
+    except KeyboardInterrupt:
+        return None
+    except EOFError:
+        return None
+    except Exception as exc:
+        raise SelectorUnavailableError("selector runtime failed") from exc
+
+    if selected is None:
+        return None
+    selected_set = {str(value) for value in selected}
+    return [item.value for item in choices if item.value in selected_set]
+
+
 def select_many(
     title: str,
     options: list[tuple[str, str]],

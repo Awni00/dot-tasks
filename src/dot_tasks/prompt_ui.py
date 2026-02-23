@@ -7,7 +7,7 @@ from typing import Any
 import typer
 
 from .models import Task, VALID_EFFORTS, VALID_PRIORITIES
-from .selector_ui import SelectorUnavailableError, select_fuzzy, select_many, select_one
+from .selector_ui import SelectorUnavailableError, select_fuzzy, select_fuzzy_many, select_many, select_one
 from . import storage
 
 
@@ -64,6 +64,56 @@ def _prompt_multi_choice(
 
     try:
         selected = select_many(title, options, default_values=default_values)
+    except SelectorUnavailableError as exc:
+        _warn_selector_fallback(exc)
+    else:
+        return selected
+
+    defaults = set(default_values or [])
+    typer.echo(title)
+    default_numbers: list[str] = []
+    for idx, (value, label) in enumerate(options, start=1):
+        mark = "x" if value in defaults else " "
+        typer.echo(f"{idx}. [{mark}] {label}")
+        if value in defaults:
+            default_numbers.append(str(idx))
+
+    while True:
+        raw = _safe_prompt(
+            "Enter comma-separated numbers",
+            default=",".join(default_numbers),
+        )
+        if raw is None:
+            return None
+        raw = raw.strip()
+        if not raw:
+            return []
+
+        tokens = [token.strip() for token in raw.split(",") if token.strip()]
+        try:
+            indexes = [int(token) for token in tokens]
+        except ValueError:
+            typer.echo("Invalid selection. Use comma-separated numbers.")
+            continue
+
+        if any(index < 1 or index > len(options) for index in indexes):
+            typer.echo("Selection out of range.")
+            continue
+
+        selected = {index - 1 for index in indexes}
+        return [value for idx, (value, _) in enumerate(options) if idx in selected]
+
+
+def _prompt_depends_on_choice(
+    title: str,
+    options: list[tuple[str, str]],
+    default_values: list[str] | None = None,
+) -> list[str] | None:
+    if not options:
+        return []
+
+    try:
+        selected = select_fuzzy_many(title, options, default_values=default_values)
     except SelectorUnavailableError as exc:
         _warn_selector_fallback(exc)
     else:
@@ -305,7 +355,7 @@ def create_form(
         if should_set_depends is None:
             return None
         if should_set_depends:
-            selected_depends = _prompt_multi_choice(
+            selected_depends = _prompt_depends_on_choice(
                 "depends_on selectors",
                 dep_options,
                 default_values=[],
@@ -352,7 +402,7 @@ def update_form(
     tags = _safe_prompt("add tags (comma separated, blank none)", default="")
     if tags is None:
         return None
-    depends_on = _prompt_multi_choice(
+    depends_on = _prompt_depends_on_choice(
         "depends_on selectors (replaces current selection)",
         dep_options,
         default_values=task.metadata.depends_on,

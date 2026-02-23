@@ -151,7 +151,8 @@ Keyboard controls in interactive prompts:
 
 - single-choice lists: `up/down` to move, `enter` to select, `ctrl-c` to cancel
 - task selection lists (`start`/`complete`/`view`/`update`/`rename`/`delete`): type to fuzzy-search, `enter` to select, `ctrl-c` to cancel
-- multi-choice lists (`depends_on`): `space` to toggle, `up/down` to move, `enter` to submit, `ctrl-c` to cancel
+- dependency multi-select (`depends_on`): type to filter, `space` or `tab` to toggle, `enter` to submit, `ctrl-c` to cancel
+- other multi-choice lists (for example init list columns): `space` to toggle, `up/down` to move, `enter` to submit, `ctrl-c` to cancel
 - in `dot-tasks create`, dependency selection is optional; the selector is only shown if you choose to set dependencies
 - if arrow-key selectors cannot run, dot-tasks automatically falls back to numeric prompts
 - `Ctrl+C` cleanly cancels the current prompt in both selector and numeric fallback modes
