@@ -10,14 +10,19 @@
 
 `dot-tasks` is a Python CLI task manager designed to be readable by both humans and AI agents.
 
+<p align="center">
+  <a href="https://github.com/Awni00/dot-tasks/actions/workflows/tests.yml"><img src="https://github.com/Awni00/dot-tasks/actions/workflows/tests.yml/badge.svg" alt="Unit Tests"></a>
+  <a href="https://github.com/Awni00/dot-tasks/actions/workflows/publish.yml"><img src="https://github.com/Awni00/dot-tasks/actions/workflows/publish.yml/badge.svg" alt="Publish"></a>
+  <a href="https://pypi.org/project/dot-tasks/"><img src="https://img.shields.io/pypi/v/dot-tasks" alt="PyPI version"></a>
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
+</p>
+
 ## Installation
 
-### End-User Install (from Git)
-
-Install directly into your current Python environment:
+### Install via pip (PyPI)
 
 ```bash
-pip install "git+https://github.com/<org-or-user>/dot-tasks.git"
+pip install dot-tasks
 ```
 
 After install:
@@ -26,10 +31,18 @@ After install:
 dot-tasks --help
 ```
 
+### Install Latest from GitHub
+
+Install directly into your current Python environment:
+
+```bash
+pip install "git+https://github.com/Awni00/dot-tasks.git"
+```
+
 ### Development Install (with uv)
 
 ```bash
-git clone https://github.com/awni00/dot-tasks.git
+git clone https://github.com/Awni00/dot-tasks.git
 cd dot-tasks
 uv sync --dev
 uv run dot-tasks --help
@@ -40,8 +53,6 @@ Alternative editable development install:
 ```bash
 uv pip install -e ".[dev]"
 ```
-
-Once the package is published to PyPI, this section can also include a simple `pip install dot-tasks`.
 
 ## Quick Start
 
@@ -82,6 +93,13 @@ Each task lives in `.tasks/<status-bucket>/<created-date>-<task_name>/` and cont
 - `dot-tasks rename <task_name> <new_task_name>`
 - `dot-tasks delete <task_name> [--hard]`
 
+`dot-tasks list` output behavior:
+
+- Interactive TTY terminals: rich sectioned table grouped by status with styled priority/dependency health.
+- Non-interactive/piped output: plain ASCII table fallback for stable scripting/parsing.
+- `--json`: unchanged machine-readable output.
+- Human-readable columns/widths are configurable via `.tasks/config.yaml` (`settings.list_table.columns`).
+
 ### Interactive Behavior
 
 `dot-tasks` uses prompt-based interaction only (no full-screen mode).
@@ -89,15 +107,41 @@ Each task lives in `.tasks/<status-bucket>/<created-date>-<task_name>/` and cont
 Config file:
 
 - `.tasks/config.yaml` stores `settings.interactive_enabled: true|false`
-- `dot-tasks init` creates this file if missing
-- In interactive terminals, `init` prompts for enabled/disabled
-- In non-interactive contexts, `init` defaults to `interactive_enabled: true`
+- `.tasks/config.yaml` also stores `settings.list_table.columns` for list output formatting
+- `dot-tasks init` creates this file if missing; re-running interactive `init` updates managed settings in-place
+- In interactive terminals, `init` uses interactive selector prompts for:
+  - default interactivity setting
+  - list columns (multi-select checkbox)
+- In non-interactive contexts, `init --nointeractive` does not modify existing config values (and creates defaults only when config is missing)
 - Unsupported config keys are ignored with warnings
 - Invalid `interactive_enabled` values warn and fall back to `true`
+- Invalid list-table config values warn and fall back to defaults
+- When selecting list columns in `init`, widths are filled from built-in defaults per column
 
 One-off override:
 
 - `--nointeractive` disables prompts for a single command invocation
+
+Default list-table config:
+
+```yaml
+settings:
+  interactive_enabled: true
+  list_table:
+    columns:
+      - name: task_name
+        width: 32
+      - name: priority
+        width: 8
+      - name: effort
+        width: 6
+      - name: deps
+        width: 12
+      - name: created
+        width: 10
+```
+
+Supported column names: `task_name`, `task_id`, `status`, `priority`, `effort`, `deps`, `created`.
 
 Keyboard controls in interactive prompts:
 
@@ -119,6 +163,15 @@ Behavior:
   - if required args are missing and interaction is enabled: opens one-shot prompts and runs the command
   - if required args are missing and interaction is disabled: errors
   - if required args are provided: runs non-interactive command path
+
+## AI Agent Integration
+
+Reusable agent-integration reference assets live in `agent-tools/`.
+
+- `agent-tools/README.md` explains how to install and use the skill and snippets.
+- `agent-tools/skills/dot-tasks/SKILL.md` is the canonical `dot-tasks` skill file.
+
+These files are intended for package users integrating `dot-tasks` into their own repositories.
 
 ## Interactive Demo
 
