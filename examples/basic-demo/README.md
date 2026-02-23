@@ -18,6 +18,12 @@ cd examples/basic-demo
 
 The first `dot-tasks init` in a new workspace writes `.tasks/config.yaml` with `settings.interactive_enabled: true|false`.
 
+Interactive pickers support keyboard navigation in prompt mode:
+
+- `up/down` + `enter` for single selection
+- `space` to toggle multi-select options and `enter` to submit
+- if selector UI is unavailable, prompts automatically fall back to numeric entry
+
 ## Inspect Preloaded State
 
 **List tasks in `.tasks/`**

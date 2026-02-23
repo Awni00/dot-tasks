@@ -7,9 +7,24 @@ from typing import Any
 import typer
 
 from .models import Task, VALID_EFFORTS, VALID_PRIORITIES
+from .selector_ui import SelectorUnavailableError, select_many, select_one
 
 
-def _prompt_single_choice(title: str, options: list[tuple[str, str]], default_value: str) -> str:
+def _warn_selector_fallback(exc: Exception) -> None:
+    message = str(exc)
+    if not message:
+        return
+    typer.echo(f"Warning: {message}; falling back to numeric prompts.", err=True)
+
+
+def _prompt_single_choice(title: str, options: list[tuple[str, str]], default_value: str) -> str | None:
+    try:
+        selected = select_one(title, options, default_value=default_value)
+    except SelectorUnavailableError as exc:
+        _warn_selector_fallback(exc)
+    else:
+        return selected
+
     typer.echo(title)
     default_index = 1
     for idx, (value, label) in enumerate(options, start=1):
@@ -33,9 +48,16 @@ def _prompt_multi_choice(
     title: str,
     options: list[tuple[str, str]],
     default_values: list[str] | None = None,
-) -> list[str]:
+) -> list[str] | None:
     if not options:
         return []
+
+    try:
+        selected = select_many(title, options, default_values=default_values)
+    except SelectorUnavailableError as exc:
+        _warn_selector_fallback(exc)
+    else:
+        return selected
 
     defaults = set(default_values or [])
     typer.echo(title)
@@ -73,6 +95,17 @@ def choose_task(tasks: list[Task], title: str = "Select task") -> str | None:
     if not tasks:
         return None
 
+    options = [
+        (task.metadata.task_name, f"{task.metadata.task_name} ({task.metadata.task_id})")
+        for task in tasks
+    ]
+    try:
+        selected = select_one(title, options, default_value=tasks[0].metadata.task_name)
+    except SelectorUnavailableError as exc:
+        _warn_selector_fallback(exc)
+    else:
+        return selected
+
     typer.echo(title)
     for idx, task in enumerate(tasks, start=1):
         typer.echo(f"{idx}. {task.metadata.task_name} ({task.metadata.task_id})")
@@ -96,6 +129,14 @@ def choose_command(
 ) -> str | None:
     if not commands:
         return None
+
+    selector_options = [(name, f"{name:<8}  {summary}".rstrip()) for name, summary in commands]
+    try:
+        selected = select_one(title, selector_options, default_value=commands[0][0])
+    except SelectorUnavailableError as exc:
+        _warn_selector_fallback(exc)
+    else:
+        return selected
 
     typer.echo("")
     typer.echo("dot-tasks command palette")
@@ -130,11 +171,15 @@ def create_form(
         [(value, value) for value in VALID_PRIORITIES],
         default_value="p2",
     )
+    if priority is None:
+        return None
     effort = _prompt_single_choice(
         "effort",
         [(value, value) for value in VALID_EFFORTS],
         default_value="m",
     )
+    if effort is None:
+        return None
     owner = typer.prompt("owner", default="")
     summary = typer.prompt("summary", default="")
     tags = typer.prompt("tags (comma separated)", default="")
@@ -143,6 +188,8 @@ def create_form(
         dep_options,
         default_values=[],
     )
+    if depends_on is None:
+        return None
     return {
         "task_name": task_name.strip(),
         "priority": priority,
@@ -165,11 +212,15 @@ def update_form(
         [("__keep__", "Keep current"), *[(value, value) for value in VALID_PRIORITIES]],
         default_value="__keep__",
     )
+    if priority is None:
+        return None
     effort = _prompt_single_choice(
         "effort",
         [("__keep__", "Keep current"), *[(value, value) for value in VALID_EFFORTS]],
         default_value="__keep__",
     )
+    if effort is None:
+        return None
     owner = typer.prompt("owner (blank to keep)", default=task.metadata.owner or "")
     tags = typer.prompt("add tags (comma separated, blank none)", default="")
     depends_on = _prompt_multi_choice(
@@ -177,6 +228,8 @@ def update_form(
         dep_options,
         default_values=task.metadata.depends_on,
     )
+    if depends_on is None:
+        return None
     note = typer.prompt("update note", default="Task metadata updated")
     return {
         "priority": None if priority == "__keep__" else priority,

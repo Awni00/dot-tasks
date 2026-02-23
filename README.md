@@ -99,6 +99,12 @@ One-off override:
 
 - `--nointeractive` disables prompts for a single command invocation
 
+Keyboard controls in interactive prompts:
+
+- single-choice lists: `up/down` to move, `enter` to select, `ctrl-c` to cancel
+- multi-choice lists (`depends_on`): `space` to toggle, `up/down` to move, `enter` to submit, `ctrl-c` to cancel
+- if arrow-key selectors cannot run, dot-tasks automatically falls back to numeric prompts
+
 Behavior:
 
 - `dot-tasks` (no command):
