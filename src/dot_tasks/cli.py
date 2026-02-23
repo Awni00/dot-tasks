@@ -111,7 +111,7 @@ def _select_task_if_missing(
         raise TaskValidationError("task_name is required in non-interactive mode")
     selected = choose_task(tasks, title=prompt)
     if not selected:
-        raise typer.Exit(code=1)
+        _exit_canceled(1)
     return selected
 
 
@@ -135,6 +135,11 @@ def _run_and_handle(fn) -> None:
     except TaskError as exc:
         typer.echo(f"Error: {exc}", err=True)
         raise typer.Exit(code=1) from exc
+
+
+def _exit_canceled(code: int) -> None:
+    typer.echo("Canceled.")
+    raise typer.Exit(code=code)
 
 
 def _command_choices() -> list[tuple[str, str]]:
@@ -180,7 +185,7 @@ def _run_command_picker(ctx: typer.Context, *, tasks_root: Path | None) -> None:
     choices = _command_choices()
     selected = choose_command(choices, title="Select a dot-tasks command")
     if not selected:
-        raise typer.Exit(code=1)
+        _exit_canceled(0)
     _invoke_from_shell(ctx, selected, tasks_root=tasks_root)
 
 
@@ -303,7 +308,7 @@ def create_cmd(
                 dependency_options=dependency_options,
             )
             if form is None:
-                raise typer.Exit(code=1)
+                _exit_canceled(1)
             name = form["task_name"]
             local_priority = form["priority"]
             local_effort = form["effort"]
@@ -498,7 +503,7 @@ def update_cmd(
             )
             form = update_form(selected_task, dependency_options=dependency_options)
             if form is None:
-                raise typer.Exit(code=1)
+                _exit_canceled(1)
             local_priority = form.get("priority")
             local_effort = form.get("effort")
             local_owner = form.get("owner")

@@ -50,7 +50,8 @@ def select_one(
             pointer=">",
             # instruction="(up/down to move, enter to select, ctrl-c to cancel)",
             vi_mode=False,
-            raise_keyboard_interrupt=False,
+            mandatory=False,
+            raise_keyboard_interrupt=True,
         ).execute()
     except KeyboardInterrupt:
         return None
@@ -91,7 +92,8 @@ def select_many(
             ],
             instruction="(space to toggle, enter to submit, ctrl-c to cancel)",
             vi_mode=False,
-            raise_keyboard_interrupt=False,
+            mandatory=False,
+            raise_keyboard_interrupt=True,
         ).execute()
     except KeyboardInterrupt:
         return None

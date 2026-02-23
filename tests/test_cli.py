@@ -242,12 +242,13 @@ def test_no_args_interactive_runs_selected_command(monkeypatch: pytest.MonkeyPat
         assert cfg["settings"]["interactive_enabled"] is True
 
 
-def test_no_args_interactive_cancel_exits_1(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_no_args_interactive_cancel_exits_0(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
     monkeypatch.setattr("dot_tasks.cli.choose_command", lambda commands, title: None)
 
     result = runner.invoke(app, [])
-    assert result.exit_code == 1
+    assert result.exit_code == 0
+    assert "Canceled." in result.output
 
 
 def test_no_args_non_interactive_prints_help_and_error(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -335,3 +336,21 @@ def test_update_interactive_form_replaces_dependencies(
     assert result.exit_code == 0
     meta, _ = _read_task_md(_task_dir(root, "todo", "main-task") / "task.md")
     assert meta["depends_on"] == [dep_b_id]
+
+
+def test_create_interactive_cancel_prints_canceled_and_exits_1(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr(
+        "dot_tasks.cli.create_form",
+        lambda default_name, dependency_options: None,
+    )
+
+    result = runner.invoke(app, ["create", "--tasks-root", str(root)])
+    assert result.exit_code == 1
+    assert "Canceled." in result.output

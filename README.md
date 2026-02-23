@@ -105,6 +105,9 @@ Keyboard controls in interactive prompts:
 - multi-choice lists (`depends_on`): `space` to toggle, `up/down` to move, `enter` to submit, `ctrl-c` to cancel
 - in `dot-tasks create`, dependency selection is optional; the selector is only shown if you choose to set dependencies
 - if arrow-key selectors cannot run, dot-tasks automatically falls back to numeric prompts
+- `Ctrl+C` cleanly cancels the current prompt in both selector and numeric fallback modes
+- canceling from root `dot-tasks` command picker quits with exit `0`
+- canceling inside a command flow aborts that command with `Canceled.` and exit `1`
 
 Behavior:
 

@@ -190,3 +190,44 @@ def test_select_one_runtime_error_raises_unavailable(monkeypatch: pytest.MonkeyP
 
     with pytest.raises(selector_ui.SelectorUnavailableError):
         selector_ui.select_one("pick", [("a", "A")])
+
+
+def test_numeric_single_choice_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        prompt_ui,
+        "select_one",
+        lambda title, options, default_value=None: (_ for _ in ()).throw(
+            selector_ui.SelectorUnavailableError("fallback")
+        ),
+    )
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: None)
+    assert prompt_ui._prompt_single_choice("priority", [("p2", "p2")], "p2") is None
+
+
+def test_numeric_multi_choice_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        prompt_ui,
+        "select_many",
+        lambda title, options, default_values=None: (_ for _ in ()).throw(
+            selector_ui.SelectorUnavailableError("fallback")
+        ),
+    )
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: None)
+    assert prompt_ui._prompt_multi_choice("depends_on", [("t1", "Task 1")]) is None
+
+
+def test_yes_no_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(prompt_ui, "select_one", lambda title, options, default_value=None: None)
+    assert prompt_ui._prompt_yes_no("Set deps?") is None
+
+
+def test_create_form_cancel_on_text_field_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: None)
+    assert prompt_ui.create_form(default_name="x", dependency_options=[]) is None
+
+
+def test_update_form_cancel_on_text_field_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    choices = iter(["__keep__", "__keep__"])
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: None)
+    assert prompt_ui.update_form(_task("alpha"), dependency_options=[]) is None

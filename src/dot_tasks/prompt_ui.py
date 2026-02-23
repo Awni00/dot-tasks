@@ -17,6 +17,13 @@ def _warn_selector_fallback(exc: Exception) -> None:
     typer.echo(f"Warning: {message}; falling back to numeric prompts.", err=True)
 
 
+def _safe_prompt(message: str, *, default: str = "") -> str | None:
+    try:
+        return typer.prompt(message, default=default)
+    except (typer.Abort, KeyboardInterrupt, EOFError):
+        return None
+
+
 def _prompt_single_choice(title: str, options: list[tuple[str, str]], default_value: str) -> str | None:
     try:
         selected = select_one(title, options, default_value=default_value)
@@ -33,7 +40,9 @@ def _prompt_single_choice(title: str, options: list[tuple[str, str]], default_va
             default_index = idx
 
     while True:
-        raw = typer.prompt("Enter number", default=str(default_index))
+        raw = _safe_prompt("Enter number", default=str(default_index))
+        if raw is None:
+            return None
         try:
             index = int(raw)
         except ValueError:
@@ -69,10 +78,13 @@ def _prompt_multi_choice(
             default_numbers.append(str(idx))
 
     while True:
-        raw = typer.prompt(
+        raw = _safe_prompt(
             "Enter comma-separated numbers",
             default=",".join(default_numbers),
-        ).strip()
+        )
+        if raw is None:
+            return None
+        raw = raw.strip()
         if not raw:
             return []
 
@@ -106,7 +118,10 @@ def _prompt_yes_no(title: str, *, default: bool = False) -> bool | None:
     prompt_label = "y/N" if not default else "Y/n"
     default_text = "y" if default else "n"
     while True:
-        raw = typer.prompt(f"{title} ({prompt_label})", default=default_text).strip().lower()
+        raw = _safe_prompt(f"{title} ({prompt_label})", default=default_text)
+        if raw is None:
+            return None
+        raw = raw.strip().lower()
         if raw in {"y", "yes"}:
             return True
         if raw in {"n", "no"}:
@@ -134,7 +149,9 @@ def choose_task(tasks: list[Task], title: str = "Select task") -> str | None:
         typer.echo(f"{idx}. {task.metadata.task_name} ({task.metadata.task_id})")
     typer.echo("0. cancel")
 
-    raw = typer.prompt("Enter number", default="1")
+    raw = _safe_prompt("Enter number", default="1")
+    if raw is None:
+        return None
     try:
         index = int(raw)
     except ValueError:
@@ -170,7 +187,9 @@ def choose_command(
         typer.echo(f"{idx:>2}. {name:<8}  {summary}")
     typer.echo(" 0. cancel")
 
-    raw = typer.prompt("Enter number", default="1")
+    raw = _safe_prompt("Enter number", default="1")
+    if raw is None:
+        return None
     try:
         index = int(raw)
     except ValueError:
@@ -188,7 +207,9 @@ def create_form(
 ) -> dict[str, Any] | None:
     dep_options = dependency_options or []
 
-    task_name = typer.prompt("task_name", default=default_name or "")
+    task_name = _safe_prompt("task_name", default=default_name or "")
+    if task_name is None:
+        return None
     priority = _prompt_single_choice(
         "priority",
         [(value, value) for value in VALID_PRIORITIES],
@@ -203,9 +224,15 @@ def create_form(
     )
     if effort is None:
         return None
-    owner = typer.prompt("owner", default="")
-    summary = typer.prompt("summary", default="")
-    tags = typer.prompt("tags (comma separated)", default="")
+    owner = _safe_prompt("owner", default="")
+    if owner is None:
+        return None
+    summary = _safe_prompt("summary", default="")
+    if summary is None:
+        return None
+    tags = _safe_prompt("tags (comma separated)", default="")
+    if tags is None:
+        return None
     if not dep_options:
         depends_on: list[str] = []
     else:
@@ -254,8 +281,12 @@ def update_form(
     )
     if effort is None:
         return None
-    owner = typer.prompt("owner (blank to keep)", default=task.metadata.owner or "")
-    tags = typer.prompt("add tags (comma separated, blank none)", default="")
+    owner = _safe_prompt("owner (blank to keep)", default=task.metadata.owner or "")
+    if owner is None:
+        return None
+    tags = _safe_prompt("add tags (comma separated, blank none)", default="")
+    if tags is None:
+        return None
     depends_on = _prompt_multi_choice(
         "depends_on selectors (replaces current selection)",
         dep_options,
@@ -263,7 +294,9 @@ def update_form(
     )
     if depends_on is None:
         return None
-    note = typer.prompt("update note", default="Task metadata updated")
+    note = _safe_prompt("update note", default="Task metadata updated")
+    if note is None:
+        return None
     return {
         "priority": None if priority == "__keep__" else priority,
         "effort": None if effort == "__keep__" else effort,
