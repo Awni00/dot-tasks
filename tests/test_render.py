@@ -95,3 +95,90 @@ def test_render_task_list_rich_sections_and_labels() -> None:
     assert "p0" in text
     assert "p1" in text
     assert "p3" in text
+
+
+def test_render_task_detail_plain_header_first_layout() -> None:
+    task = Task(
+        metadata=TaskMetadata(
+            task_id="t-20260206-001",
+            task_name="build-nightly-report",
+            status="todo",
+            date_created="2026-02-06",
+            priority="p0",
+            effort="l",
+            owner="alex",
+            tags=["reporting", "automation"],
+        ),
+        body="\n\n## Summary\n- demo\n",
+        task_dir=Path("/tmp") / "build-nightly-report",
+    )
+    deps = [("add-json-export", "t-20260205-001", "todo")]
+    blocked_by = [("downstream-task", "t-20260207-001", "doing")]
+
+    output = render.render_task_detail_plain(task, deps, blocked_by, 1)
+    lines = output.splitlines()
+
+    assert lines[0] == "build-nightly-report (t-20260206-001)"
+    assert lines[1] == "[todo] [p0] [l] [deps: blocked(1)]"
+    assert lines[2] == "owner: alex    tags: reporting, automation"
+    assert lines[3] == "created: 2026-02-06    started: -    completed: -"
+    assert lines[4] == "depends_on: add-json-export (t-20260205-001) [todo]"
+    assert lines[5] == "blocked_by: downstream-task (t-20260207-001) [doing]"
+    assert "## Summary" in output
+
+
+def test_render_task_detail_plain_uses_dash_for_empty_fields() -> None:
+    task = Task(
+        metadata=TaskMetadata(
+            task_id="t-20260206-001",
+            task_name="build-nightly-report",
+            status="todo",
+            date_created="2026-02-06",
+            priority="p2",
+            effort="m",
+        ),
+        body="",
+        task_dir=Path("/tmp") / "build-nightly-report",
+    )
+
+    output = render.render_task_detail_plain(task, [], [], 0)
+    assert "[todo] [p2] [m] [deps: ready]" in output
+    assert "owner: -    tags: -" in output
+    assert "started: -    completed: -" in output
+    assert "depends_on: -" in output
+    assert "blocked_by: -" in output
+    assert "(empty)" in output
+
+
+def test_render_task_detail_rich_header_first_layout() -> None:
+    pytest.importorskip("rich")
+    from rich.console import Console
+
+    task = Task(
+        metadata=TaskMetadata(
+            task_id="t-20260206-001",
+            task_name="build-nightly-report",
+            status="todo",
+            date_created="2026-02-06",
+            priority="p0",
+            effort="l",
+            owner="alex",
+            tags=["reporting", "automation"],
+        ),
+        body="\n\n## Summary\n- demo\n",
+        task_dir=Path("/tmp") / "build-nightly-report",
+    )
+    deps = [("add-json-export", "t-20260205-001", "todo")]
+    blocked_by = [("downstream-task", "t-20260207-001", "doing")]
+
+    renderable = render.render_task_detail_rich(task, deps, blocked_by, 1)
+    console = Console(record=True, width=200, force_terminal=False, color_system=None)
+    console.print(renderable)
+    text = console.export_text()
+
+    assert "build-nightly-report (t-20260206-001)" in text
+    assert "[todo] [p0] [l] [deps: blocked(1)]" in text
+    assert "owner: alex    tags: reporting, automation" in text
+    assert "depends_on: add-json-export (t-20260205-001) [todo]" in text
+    assert "blocked_by: downstream-task (t-20260207-001) [doing]" in text
+    assert "## Summary" in text

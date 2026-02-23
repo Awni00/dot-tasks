@@ -32,7 +32,9 @@ def test_example_demo_list_and_view_and_blocked_start(monkeypatch, tmp_path: Pat
 
     viewed = runner.invoke(app, ["view", "build-nightly-report"])
     assert viewed.exit_code == 0
-    assert "add-json-export (t-20260205-001) [todo]" in viewed.output
+    assert "build-nightly-report (t-20260206-001)" in viewed.output
+    assert "[todo] [p0] [l] [deps: blocked(1)]" in viewed.output
+    assert "depends_on: add-json-export (t-20260205-001) [todo]" in viewed.output
 
     blocked = runner.invoke(app, ["start", "build-nightly-report"])
     assert blocked.exit_code == 1

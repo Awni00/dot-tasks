@@ -38,6 +38,10 @@ def _can_render_rich_list_output() -> bool:
     return sys.stdout.isatty()
 
 
+def _can_render_rich_detail_output() -> bool:
+    return sys.stdout.isatty()
+
+
 def _can_render_banner() -> bool:
     return sys.stdout.isatty()
 
@@ -638,7 +642,12 @@ def view_cmd(
         if as_json:
             typer.echo(render.render_task_detail_json(task, deps))
         else:
-            typer.echo(render.render_task_detail_plain(task, deps))
+            blocked_by = svc.blocked_by_rows(task)
+            unmet_count, _ = svc.dependency_health(task)
+            if _can_render_rich_detail_output():
+                _print_rich(render.render_task_detail_rich(task, deps, blocked_by, unmet_count))
+            else:
+                typer.echo(render.render_task_detail_plain(task, deps, blocked_by, unmet_count))
 
     _run_and_handle(_inner)
 

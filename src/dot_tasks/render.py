@@ -200,31 +200,79 @@ def render_task_list_json(tasks: Iterable[Task], unmet_counts: dict[str, int]) -
     return json.dumps(payload, indent=2)
 
 
-def render_task_detail_plain(task: Task, dependency_rows: list[tuple[str, str, str]]) -> str:
-    meta = task.metadata
-    lines = [
-        f"task_name: {meta.task_name}",
-        f"task_id: {meta.task_id}",
-        f"status: {meta.status}",
-        f"priority: {meta.priority}",
-        f"effort: {meta.effort}",
-        f"owner: {meta.owner or '-'}",
-        f"tags: {', '.join(meta.tags) if meta.tags else '-'}",
-        f"created: {meta.date_created}",
-        f"started: {meta.date_started or '-'}",
-        f"completed: {meta.date_completed or '-'}",
-        "dependencies:",
-    ]
-    if not dependency_rows:
-        lines.append("- none")
-    else:
-        for task_name, task_id, status in dependency_rows:
-            lines.append(f"- {task_name} ({task_id}) [{status}]")
+def _inline_dependency_rows(rows: list[tuple[str, str, str]]) -> str:
+    if not rows:
+        return "-"
+    return ", ".join(f"{task_name} ({task_id}) [{status}]" for task_name, task_id, status in rows)
 
-    lines.append("")
-    lines.append("body:")
-    lines.append(task.body.rstrip() or "(empty)")
+
+def _normalized_task_body(body: str) -> str:
+    return body.lstrip("\n").rstrip() or "(empty)"
+
+
+def render_task_detail_plain(
+    task: Task,
+    dependency_rows: list[tuple[str, str, str]],
+    blocked_by_rows: list[tuple[str, str, str]],
+    unmet_count: int,
+) -> str:
+    meta = task.metadata
+    tags = ", ".join(meta.tags) if meta.tags else "-"
+    lines = [
+        f"{meta.task_name} ({meta.task_id})",
+        f"[{meta.status}] [{meta.priority}] [{meta.effort}] [deps: {_health_label(unmet_count)}]",
+        f"owner: {meta.owner or '-'}    tags: {tags}",
+        (
+            f"created: {meta.date_created}    started: {meta.date_started or '-'}    "
+            f"completed: {meta.date_completed or '-'}"
+        ),
+        f"depends_on: {_inline_dependency_rows(dependency_rows)}",
+        f"blocked_by: {_inline_dependency_rows(blocked_by_rows)}",
+        "",
+        _normalized_task_body(task.body),
+    ]
     return "\n".join(lines)
+
+
+def render_task_detail_rich(
+    task: Task,
+    dependency_rows: list[tuple[str, str, str]],
+    blocked_by_rows: list[tuple[str, str, str]],
+    unmet_count: int,
+):
+    from rich.console import Group
+    from rich.text import Text
+
+    meta = task.metadata
+    deps_label = _health_label(unmet_count)
+    deps_style = "green" if unmet_count <= 0 else "yellow"
+
+    title = Text()
+    title.append(meta.task_name, style="bold")
+    title.append(f" ({meta.task_id})", style="dim")
+
+    chips = Text()
+    chips.append(f"[{meta.status}]", style=_status_style(meta.status))
+    chips.append(" ")
+    chips.append(f"[{meta.priority}]", style=_priority_style(meta.priority))
+    chips.append(" ")
+    chips.append(f"[{meta.effort}]")
+    chips.append(" ")
+    chips.append("[deps: ")
+    chips.append(deps_label, style=deps_style)
+    chips.append("]")
+
+    tags = ", ".join(meta.tags) if meta.tags else "-"
+    owner_line = Text(f"owner: {meta.owner or '-'}    tags: {tags}")
+    dates_line = Text(
+        f"created: {meta.date_created}    started: {meta.date_started or '-'}    "
+        f"completed: {meta.date_completed or '-'}"
+    )
+    depends_line = Text(f"depends_on: {_inline_dependency_rows(dependency_rows)}")
+    blocked_line = Text(f"blocked_by: {_inline_dependency_rows(blocked_by_rows)}")
+
+    body_text = Text(_normalized_task_body(task.body))
+    return Group(title, chips, owner_line, dates_line, depends_line, blocked_line, Text(""), body_text)
 
 
 def render_task_detail_json(task: Task, dependency_rows: list[tuple[str, str, str]]) -> str:

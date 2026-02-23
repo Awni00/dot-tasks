@@ -298,11 +298,71 @@ def test_view_renders_dependencies_as_name_and_id(tmp_path: Path) -> None:
     runner.invoke(app, ["create", "dep-view", "--tasks-root", str(root)])
     runner.invoke(app, ["create", "task-view", "--depends-on", "dep-view", "--tasks-root", str(root)])
     dep_meta, _ = _read_task_md(_task_dir(root, "todo", "dep-view") / "task.md")
+    task_meta, _ = _read_task_md(_task_dir(root, "todo", "task-view") / "task.md")
     dep_id = dep_meta["task_id"]
+    task_id = task_meta["task_id"]
 
     result = runner.invoke(app, ["view", "task-view", "--tasks-root", str(root)])
     assert result.exit_code == 0
-    assert f"dep-view ({dep_id})" in result.output
+    assert f"task-view ({task_id})" in result.output
+    assert "[todo] [p2] [m] [deps: blocked(1)]" in result.output
+    assert f"depends_on: dep-view ({dep_id}) [todo]" in result.output
+    assert "blocked_by: -" in result.output
+
+
+def test_view_renders_blocked_by_as_name_and_id(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "dep-view", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "task-view", "--depends-on", "dep-view", "--tasks-root", str(root)])
+    task_meta, _ = _read_task_md(_task_dir(root, "todo", "task-view") / "task.md")
+    task_id = task_meta["task_id"]
+
+    result = runner.invoke(app, ["view", "dep-view", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert f"blocked_by: task-view ({task_id}) [todo]" in result.output
+
+
+def test_view_non_tty_uses_plain_renderer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "plain-view", "--tasks-root", str(root)])
+
+    monkeypatch.setattr("dot_tasks.cli._can_render_rich_detail_output", lambda: False)
+    monkeypatch.setattr(
+        "dot_tasks.cli.render.render_task_detail_plain",
+        lambda task, deps, blocked_by, unmet_count: "PLAIN-DETAIL",
+    )
+    monkeypatch.setattr(
+        "dot_tasks.cli.render.render_task_detail_rich",
+        lambda task, deps, blocked_by, unmet_count: pytest.fail("rich detail renderer should not run"),
+    )
+
+    result = runner.invoke(app, ["view", "plain-view", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert "PLAIN-DETAIL" in result.output
+
+
+def test_view_tty_uses_rich_renderer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "rich-view", "--tasks-root", str(root)])
+
+    monkeypatch.setattr("dot_tasks.cli._can_render_rich_detail_output", lambda: True)
+    monkeypatch.setattr(
+        "dot_tasks.cli.render.render_task_detail_plain",
+        lambda task, deps, blocked_by, unmet_count: pytest.fail("plain detail renderer should not run"),
+    )
+    monkeypatch.setattr(
+        "dot_tasks.cli.render.render_task_detail_rich",
+        lambda task, deps, blocked_by, unmet_count: "RICH-DETAIL",
+    )
+    captured: list[object] = []
+    monkeypatch.setattr("dot_tasks.cli._print_rich", lambda renderable: captured.append(renderable))
+
+    result = runner.invoke(app, ["view", "rich-view", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert captured == ["RICH-DETAIL"]
 
 
 def test_list_grouped_sorted(tmp_path: Path) -> None:
@@ -400,6 +460,22 @@ def test_json_output_suppresses_banner_even_in_tty(monkeypatch: pytest.MonkeyPat
     assert result.exit_code == 0
     assert "BANNER" not in result.output
     assert '"task_name": "json-view"' in result.output
+
+
+def test_view_json_output_unchanged_shape(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "dep-json-view", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "json-view", "--depends-on", "dep-json-view", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["view", "json-view", "--json", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert '"metadata"' in result.output
+    assert '"dependencies"' in result.output
+    assert '"task_name": "json-view"' in result.output
+    assert '"task_name": "dep-json-view"' in result.output
+    assert '"body"' in result.output
+    assert '"path"' in result.output
 
 
 def test_subcommand_help_does_not_print_banner(monkeypatch: pytest.MonkeyPatch) -> None:

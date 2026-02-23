@@ -387,3 +387,14 @@ class TaskService:
                 continue
             rows.append((dep.metadata.task_name, dep.metadata.task_id, dep.metadata.status))
         return rows
+
+    def blocked_by_rows(self, task: Task) -> list[tuple[str, str, str]]:
+        by_id = self._by_id(include_trash=False)
+        rows: list[tuple[str, str, str]] = []
+        for blocked_id in task.metadata.blocked_by:
+            blocked = by_id.get(blocked_id)
+            if blocked is None:
+                rows.append(("missing", blocked_id, "unknown"))
+                continue
+            rows.append((blocked.metadata.task_name, blocked.metadata.task_id, blocked.metadata.status))
+        return rows
