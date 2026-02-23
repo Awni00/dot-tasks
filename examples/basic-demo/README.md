@@ -16,7 +16,9 @@ pip install -e .
 cd examples/basic-demo
 ```
 
-The first `dot-tasks init` in a new workspace writes `.tasks/config.yaml` with `settings.interactive_enabled: true|false`.
+The first `dot-tasks init` in a new workspace writes `.tasks/config.yaml` with `settings.interactive_enabled`, `settings.show_banner`, and `settings.list_table.columns`.
+In interactive terminals, `init` uses selector prompts (including checkbox multi-select) to configure these managed values.
+Re-running interactive `dot-tasks init` updates those managed config values; `--nointeractive` keeps existing values unchanged.
 
 Interactive pickers support keyboard navigation in prompt mode:
 
@@ -34,15 +36,19 @@ Interactive pickers support keyboard navigation in prompt mode:
 dot-tasks list
 ```
 
+In interactive terminals, `dot-tasks list` now renders a richer styled table grouped by status.
+The snippet below reflects the plain fallback format (used for non-interactive/piped output).
+By default, list output omits `status` and `task_id` because rows are already grouped by status.
+
 Expected snippet:
 
 ```text
-task_name              task_id         status     priority  effort  deps        created   
----------------------  --------------  ---------  --------  ------  ----------  ----------
-build-nightly-report   t-20260206-001  todo       p0        l       blocked(1)  2026-02-06
-add-json-export        t-20260205-001  todo       p1        m       ready       2026-02-05
-document-command-help  t-20260203-001  doing      p2        s       ready       2026-02-03
-bootstrap-dot-tasks    t-20260201-001  completed  p1        m       ready       2026-02-01
+task_name                         priority  effort  deps          created   
+--------------------------------  --------  ------  ------------  ----------
+build-nightly-report              p0        l       blocked(1)    2026-02-06
+add-json-export                   p1        m       ready         2026-02-05
+document-command-help             p2        s       ready         2026-02-03
+bootstrap-dot-tasks               p1        m       ready         2026-02-01
 ```
 
 **View a particular task by name**
@@ -121,8 +127,8 @@ dot-tasks list done
 Expected snippet:
 
 ```text
-add-json-export         t-20260205-001  completed  p1  m  ready  2026-02-05
-bootstrap-dot-tasks     t-20260201-001  completed  p1  m  ready  2026-02-01
+add-json-export                   p1        m       ready         2026-02-05
+bootstrap-dot-tasks               p1        m       ready         2026-02-01
 ```
 
 ## Create + Rename + Delete Demo

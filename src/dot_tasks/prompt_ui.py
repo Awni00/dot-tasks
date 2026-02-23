@@ -8,6 +8,7 @@ import typer
 
 from .models import Task, VALID_EFFORTS, VALID_PRIORITIES
 from .selector_ui import SelectorUnavailableError, select_many, select_one
+from . import storage
 
 
 def _warn_selector_fallback(exc: Exception) -> None:
@@ -199,6 +200,70 @@ def choose_command(
     if 1 <= index <= len(commands):
         return commands[index - 1][0]
     return None
+
+
+def init_config_form(
+    *,
+    default_interactive_enabled: bool = storage.DEFAULT_INTERACTIVE_ENABLED,
+    default_show_banner: bool = storage.DEFAULT_SHOW_BANNER,
+    default_list_column_names: list[str] | None = None,
+) -> dict[str, Any] | None:
+    default_interactive_value = "enabled" if default_interactive_enabled else "disabled"
+    interactive_choice = _prompt_single_choice(
+        "Default interactive behavior",
+        [
+            ("enabled", "Enable interactive prompts"),
+            ("disabled", "Disable interactive prompts"),
+        ],
+        default_value=default_interactive_value,
+    )
+    if interactive_choice is None:
+        return None
+
+    default_banner_value = "enabled" if default_show_banner else "disabled"
+    banner_choice = _prompt_single_choice(
+        "Banner behavior for root 'dot-tasks'",
+        [
+            ("enabled", "Show banner"),
+            ("disabled", "Hide banner"),
+        ],
+        default_value=default_banner_value,
+    )
+    if banner_choice is None:
+        return None
+
+    width_map = dict(storage.LIST_TABLE_COLUMN_DEFAULT_WIDTHS)
+    fallback_column_names = [name for name, _ in storage.DEFAULT_LIST_TABLE_COLUMNS]
+    if default_list_column_names is None:
+        default_column_names = list(fallback_column_names)
+    else:
+        seen: set[str] = set()
+        default_column_names = []
+        for name in default_list_column_names:
+            if name in storage.LIST_TABLE_COLUMNS_SUPPORTED and name not in seen:
+                default_column_names.append(name)
+                seen.add(name)
+    column_options = [
+        (name, f"{name} (width {width_map[name]})")
+        for name in storage.LIST_TABLE_COLUMNS_SUPPORTED
+    ]
+    selected_columns = _prompt_multi_choice(
+        "Select list columns",
+        column_options,
+        default_values=default_column_names,
+    )
+    if selected_columns is None:
+        return None
+    if not selected_columns:
+        typer.echo("Warning: no list columns selected; using defaults.", err=True)
+        selected_columns = fallback_column_names
+
+    list_columns = [{"name": name, "width": width_map[name]} for name in selected_columns]
+    return {
+        "interactive_enabled": interactive_choice == "enabled",
+        "show_banner": banner_choice == "enabled",
+        "list_columns": list_columns,
+    }
 
 
 def create_form(

@@ -6,7 +6,7 @@ from dataclasses import fields
 import datetime as dt
 from pathlib import Path
 import shutil
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 import yaml
 
@@ -21,6 +21,32 @@ from .models import (
 
 TASK_META_KEYS = [f.name for f in fields(TaskMetadata)]
 DEFAULT_INTERACTIVE_ENABLED = True
+DEFAULT_SHOW_BANNER = True
+LIST_TABLE_COLUMNS_SUPPORTED = (
+    "task_name",
+    "task_id",
+    "status",
+    "priority",
+    "effort",
+    "deps",
+    "created",
+)
+LIST_TABLE_COLUMN_DEFAULT_WIDTHS: dict[str, int] = {
+    "task_name": 32,
+    "task_id": 14,
+    "status": 10,
+    "priority": 8,
+    "effort": 6,
+    "deps": 12,
+    "created": 10,
+}
+DEFAULT_LIST_TABLE_COLUMNS: tuple[tuple[str, int], ...] = (
+    ("task_name", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["task_name"]),
+    ("priority", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["priority"]),
+    ("effort", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["effort"]),
+    ("deps", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["deps"]),
+    ("created", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["created"]),
+)
 
 
 def find_repo_root(start: Path) -> Path | None:
@@ -64,27 +90,108 @@ def config_path(tasks_root: Path) -> Path:
     return tasks_root / "config.yaml"
 
 
-def default_config(interactive_enabled: bool = DEFAULT_INTERACTIVE_ENABLED) -> dict[str, Any]:
+def _default_list_table_columns(
+    columns: list[dict[str, int | str]] | None = None,
+) -> list[dict[str, int | str]]:
+    if columns is not None:
+        return [{"name": str(column["name"]), "width": int(column["width"])} for column in columns]
+    return [{"name": name, "width": width} for name, width in DEFAULT_LIST_TABLE_COLUMNS]
+
+
+def default_config(
+    interactive_enabled: bool = DEFAULT_INTERACTIVE_ENABLED,
+    list_columns: list[dict[str, int | str]] | None = None,
+    show_banner: bool = DEFAULT_SHOW_BANNER,
+) -> dict[str, Any]:
     return {
-        "settings": {
-            "interactive_enabled": interactive_enabled,
-        }
+        "settings": build_managed_settings(
+            interactive_enabled,
+            list_columns,
+            show_banner=show_banner,
+        )
     }
+
+
+def build_managed_settings(
+    interactive_enabled: bool = DEFAULT_INTERACTIVE_ENABLED,
+    list_columns: list[dict[str, int | str]] | None = None,
+    show_banner: bool = DEFAULT_SHOW_BANNER,
+) -> dict[str, Any]:
+    return {
+        "interactive_enabled": interactive_enabled,
+        "show_banner": show_banner,
+        "list_table": {
+            "columns": _default_list_table_columns(list_columns),
+        },
+    }
+
+
+def merge_managed_config(
+    existing_config: dict[str, Any],
+    interactive_enabled: bool = DEFAULT_INTERACTIVE_ENABLED,
+    list_columns: list[dict[str, int | str]] | None = None,
+    show_banner: bool = DEFAULT_SHOW_BANNER,
+) -> dict[str, Any]:
+    merged = dict(existing_config) if isinstance(existing_config, dict) else {}
+    existing_settings = merged.get("settings", {})
+    settings = dict(existing_settings) if isinstance(existing_settings, dict) else {}
+    settings.update(
+        build_managed_settings(
+            interactive_enabled,
+            list_columns,
+            show_banner=show_banner,
+        )
+    )
+    merged["settings"] = settings
+    return merged
+
+
+def write_config(tasks_root: Path, payload: dict[str, Any]) -> None:
+    path = config_path(tasks_root)
+    dumped = yaml.safe_dump(
+        payload,
+        sort_keys=False,
+        default_flow_style=False,
+    )
+    path.write_text(dumped, encoding="utf-8")
+
+
+def upsert_init_config(
+    tasks_root: Path,
+    interactive_enabled: bool = DEFAULT_INTERACTIVE_ENABLED,
+    list_columns: list[dict[str, int | str]] | None = None,
+    show_banner: bool = DEFAULT_SHOW_BANNER,
+) -> Literal["created", "updated"]:
+    path = config_path(tasks_root)
+    exists = path.exists()
+    existing = read_config(tasks_root) if exists else {}
+    merged = merge_managed_config(
+        existing,
+        interactive_enabled=interactive_enabled,
+        list_columns=list_columns,
+        show_banner=show_banner,
+    )
+    write_config(tasks_root, merged)
+    return "updated" if exists else "created"
 
 
 def write_default_config_if_missing(
     tasks_root: Path,
     interactive_enabled: bool = DEFAULT_INTERACTIVE_ENABLED,
+    list_columns: list[dict[str, int | str]] | None = None,
+    show_banner: bool = DEFAULT_SHOW_BANNER,
 ) -> bool:
     path = config_path(tasks_root)
     if path.exists():
         return False
-    payload = yaml.safe_dump(
-        default_config(interactive_enabled),
-        sort_keys=False,
-        default_flow_style=False,
+    write_config(
+        tasks_root,
+        default_config(
+            interactive_enabled,
+            list_columns=list_columns,
+            show_banner=show_banner,
+        ),
     )
-    path.write_text(payload, encoding="utf-8")
     return True
 
 
@@ -121,7 +228,7 @@ def resolve_interactive_enabled(
             warn(f"Invalid settings section in {config_path(tasks_root)}. Using defaults.")
         return DEFAULT_INTERACTIVE_ENABLED
 
-    supported_settings_keys = {"interactive_enabled"}
+    supported_settings_keys = {"interactive_enabled", "show_banner", "list_table"}
     for key in settings.keys():
         if key not in supported_settings_keys and warn is not None:
             warn(f"Unsupported settings key '{key}' in {config_path(tasks_root)}. Ignoring.")
@@ -137,6 +244,140 @@ def resolve_interactive_enabled(
             )
         return DEFAULT_INTERACTIVE_ENABLED
     return interactive_enabled
+
+
+def resolve_show_banner(
+    tasks_root: Path,
+    warn: Callable[[str], None] | None = None,
+) -> bool:
+    data = read_config(tasks_root, warn=warn)
+    supported_top_keys = {"settings"}
+    for key in data.keys():
+        if key not in supported_top_keys and warn is not None:
+            warn(f"Unsupported config key '{key}' in {config_path(tasks_root)}. Ignoring.")
+
+    settings = data.get("settings", {})
+    if not isinstance(settings, dict):
+        if warn is not None:
+            warn(f"Invalid settings section in {config_path(tasks_root)}. Using defaults.")
+        return DEFAULT_SHOW_BANNER
+
+    supported_settings_keys = {"interactive_enabled", "show_banner", "list_table"}
+    for key in settings.keys():
+        if key not in supported_settings_keys and warn is not None:
+            warn(f"Unsupported settings key '{key}' in {config_path(tasks_root)}. Ignoring.")
+
+    show_banner = settings.get("show_banner")
+    if show_banner is None:
+        return DEFAULT_SHOW_BANNER
+    if not isinstance(show_banner, bool):
+        if warn is not None:
+            warn(
+                f"Invalid settings.show_banner in {config_path(tasks_root)}. "
+                f"Using default '{DEFAULT_SHOW_BANNER}'."
+            )
+        return DEFAULT_SHOW_BANNER
+    return show_banner
+
+
+def resolve_list_table_columns(
+    tasks_root: Path,
+    warn: Callable[[str], None] | None = None,
+) -> list[dict[str, int | str]]:
+    defaults = _default_list_table_columns()
+    data = read_config(tasks_root, warn=warn)
+    supported_top_keys = {"settings"}
+    for key in data.keys():
+        if key not in supported_top_keys and warn is not None:
+            warn(f"Unsupported config key '{key}' in {config_path(tasks_root)}. Ignoring.")
+
+    settings = data.get("settings", {})
+    if not isinstance(settings, dict):
+        if warn is not None:
+            warn(f"Invalid settings section in {config_path(tasks_root)}. Using defaults.")
+        return defaults
+
+    supported_settings_keys = {"interactive_enabled", "show_banner", "list_table"}
+    for key in settings.keys():
+        if key not in supported_settings_keys and warn is not None:
+            warn(f"Unsupported settings key '{key}' in {config_path(tasks_root)}. Ignoring.")
+
+    list_table = settings.get("list_table")
+    if list_table is None:
+        return defaults
+    if not isinstance(list_table, dict):
+        if warn is not None:
+            warn(
+                f"Invalid settings.list_table section in {config_path(tasks_root)}. "
+                "Using defaults."
+            )
+        return defaults
+
+    supported_list_table_keys = {"columns"}
+    for key in list_table.keys():
+        if key not in supported_list_table_keys and warn is not None:
+            warn(
+                f"Unsupported settings.list_table key '{key}' in {config_path(tasks_root)}. Ignoring."
+            )
+
+    columns = list_table.get("columns")
+    if columns is None:
+        return defaults
+    if not isinstance(columns, list):
+        if warn is not None:
+            warn(
+                f"Invalid settings.list_table.columns in {config_path(tasks_root)}. "
+                "Using defaults."
+            )
+        return defaults
+
+    validated: list[dict[str, int | str]] = []
+    seen: set[str] = set()
+    for index, raw_column in enumerate(columns, start=1):
+        if not isinstance(raw_column, dict):
+            if warn is not None:
+                warn(
+                    f"Invalid column entry at settings.list_table.columns[{index}] in "
+                    f"{config_path(tasks_root)}. Ignoring."
+                )
+            continue
+
+        name = raw_column.get("name")
+        width = raw_column.get("width")
+        if name not in LIST_TABLE_COLUMNS_SUPPORTED:
+            if warn is not None:
+                warn(
+                    f"Unsupported list column '{name}' in {config_path(tasks_root)}. "
+                    "Ignoring."
+                )
+            continue
+        if name in seen:
+            if warn is not None:
+                warn(
+                    f"Duplicate list column '{name}' in {config_path(tasks_root)}. "
+                    "Keeping first occurrence."
+                )
+            continue
+        if not isinstance(width, int) or isinstance(width, bool) or width <= 0:
+            if warn is not None:
+                warn(
+                    f"Invalid width for list column '{name}' in {config_path(tasks_root)}. "
+                    "Expected a positive integer."
+                )
+            continue
+
+        validated.append({"name": name, "width": width})
+        seen.add(name)
+
+    if validated:
+        return validated
+
+    if warn is not None:
+        warn(
+            f"No valid settings.list_table.columns in {config_path(tasks_root)}. "
+            "Using defaults."
+        )
+    return defaults
 
 
 def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:

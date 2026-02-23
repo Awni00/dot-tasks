@@ -107,14 +107,17 @@ Each task lives in `.tasks/<status-bucket>/<created-date>-<task_name>/` and cont
 Config file:
 
 - `.tasks/config.yaml` stores `settings.interactive_enabled: true|false`
+- `.tasks/config.yaml` stores `settings.show_banner: true|false` (root command banner visibility)
 - `.tasks/config.yaml` also stores `settings.list_table.columns` for list output formatting
 - `dot-tasks init` creates this file if missing; re-running interactive `init` updates managed settings in-place
 - In interactive terminals, `init` uses interactive selector prompts for:
   - default interactivity setting
+  - root banner visibility
   - list columns (multi-select checkbox)
 - In non-interactive contexts, `init --nointeractive` does not modify existing config values (and creates defaults only when config is missing)
 - Unsupported config keys are ignored with warnings
 - Invalid `interactive_enabled` values warn and fall back to `true`
+- Invalid `show_banner` values warn and fall back to `true`
 - Invalid list-table config values warn and fall back to defaults
 - When selecting list columns in `init`, widths are filled from built-in defaults per column
 
@@ -127,6 +130,7 @@ Default list-table config:
 ```yaml
 settings:
   interactive_enabled: true
+  show_banner: true
   list_table:
     columns:
       - name: task_name
@@ -156,10 +160,12 @@ Keyboard controls in interactive prompts:
 Behavior:
 
 - `dot-tasks` (no command):
+  - if banner is enabled and a TTY is present: prints banner + divider before output
   - if interaction is enabled and a TTY is present: opens a one-shot command picker
   - if interaction is disabled: prints help and exits `0`
   - if interaction is enabled but no TTY is present: prints help + explicit error and exits `2`
 - `dot-tasks <command>`:
+  - does not print the root banner
   - if required args are missing and interaction is enabled: opens one-shot prompts and runs the command
   - if required args are missing and interaction is disabled: errors
   - if required args are provided: runs non-interactive command path

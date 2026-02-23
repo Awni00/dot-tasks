@@ -1,0 +1,15 @@
+settings:
+  interactive_enabled: true
+  show_banner: false
+  list_table:
+    columns:
+    - name: task_name
+      width: 32
+    - name: priority
+      width: 8
+    - name: effort
+      width: 6
+    - name: deps
+      width: 12
+    - name: created
+      width: 10

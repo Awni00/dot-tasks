@@ -77,6 +77,147 @@ def test_choose_task_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> Non
     assert selected is None
 
 
+def test_init_config_form_uses_selector_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(prompt_ui, "select_one", lambda *args, **kwargs: "disabled")
+    monkeypatch.setattr(prompt_ui, "select_many", lambda *args, **kwargs: ["task_name", "status"])
+    monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: pytest.fail("numeric prompt used"))
+
+    payload = prompt_ui.init_config_form()
+    assert payload is not None
+    assert payload["interactive_enabled"] is False
+    assert payload["show_banner"] is False
+    assert payload["list_columns"] == [
+        {"name": "task_name", "width": 32},
+        {"name": "status", "width": 10},
+    ]
+
+
+def test_init_config_form_uses_passed_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured_defaults: dict[str, object] = {}
+
+    def _select_one(title, options, default_value=None):
+        if title == "Default interactive behavior":
+            captured_defaults["interactive"] = default_value
+            return "enabled"
+        if title == "Banner behavior for root 'dot-tasks'":
+            captured_defaults["show_banner"] = default_value
+            return "disabled"
+        return "enabled"
+
+    def _select_many(title, options, default_values=None):
+        captured_defaults["columns"] = default_values
+        return ["status"]
+
+    monkeypatch.setattr(prompt_ui, "select_one", _select_one)
+    monkeypatch.setattr(prompt_ui, "select_many", _select_many)
+
+    payload = prompt_ui.init_config_form(
+        default_interactive_enabled=False,
+        default_show_banner=True,
+        default_list_column_names=["status", "task_name"],
+    )
+    assert payload is not None
+    assert captured_defaults == {
+        "interactive": "disabled",
+        "show_banner": "enabled",
+        "columns": ["status", "task_name"],
+    }
+    assert payload["show_banner"] is False
+    assert payload["list_columns"] == [{"name": "status", "width": 10}]
+
+
+def test_init_config_form_falls_back_to_numeric_on_selector_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        prompt_ui,
+        "select_one",
+        lambda *args, **kwargs: (_ for _ in ()).throw(selector_ui.SelectorUnavailableError("fallback")),
+    )
+    monkeypatch.setattr(
+        prompt_ui,
+        "select_many",
+        lambda *args, **kwargs: (_ for _ in ()).throw(selector_ui.SelectorUnavailableError("fallback")),
+    )
+    prompt_values = iter(["1", "1", "1,4,5"])
+    monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: next(prompt_values))
+
+    payload = prompt_ui.init_config_form()
+    assert payload is not None
+    assert payload["interactive_enabled"] is True
+    assert payload["show_banner"] is True
+    assert payload["list_columns"] == [
+        {"name": "task_name", "width": 32},
+        {"name": "priority", "width": 8},
+        {"name": "effort", "width": 6},
+    ]
+
+
+def test_init_config_form_empty_columns_falls_back_to_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: "enabled")
+    monkeypatch.setattr(prompt_ui, "_prompt_multi_choice", lambda *args, **kwargs: [])
+
+    payload = prompt_ui.init_config_form()
+    assert payload is not None
+    assert payload["show_banner"] is True
+    assert payload["list_columns"] == [
+        {"name": "task_name", "width": 32},
+        {"name": "priority", "width": 8},
+        {"name": "effort", "width": 6},
+        {"name": "deps", "width": 12},
+        {"name": "created", "width": 10},
+    ]
+    captured = capsys.readouterr()
+    assert "Warning: no list columns selected; using defaults." in captured.err
+
+
+def test_init_config_form_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: None)
+    assert prompt_ui.init_config_form() is None
+
+
+def test_init_config_form_ignores_invalid_default_columns(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def _multi_choice(*args, **kwargs):
+        captured["defaults"] = kwargs.get("default_values")
+        return ["task_name"]
+
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: "enabled")
+    monkeypatch.setattr(prompt_ui, "_prompt_multi_choice", _multi_choice)
+
+    payload = prompt_ui.init_config_form(default_list_column_names=["not-a-column", "task_name", "task_name"])
+    assert payload is not None
+    assert captured["defaults"] == ["task_name"]
+
+
+def test_init_config_form_empty_selection_uses_fallback_defaults_even_with_invalid_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: "enabled")
+    monkeypatch.setattr(prompt_ui, "_prompt_multi_choice", lambda *args, **kwargs: [])
+
+    payload = prompt_ui.init_config_form(default_list_column_names=["not-a-column"])
+    assert payload is not None
+    assert payload["show_banner"] is True
+    assert payload["list_columns"] == [
+        {"name": "task_name", "width": 32},
+        {"name": "priority", "width": 8},
+        {"name": "effort", "width": 6},
+        {"name": "deps", "width": 12},
+        {"name": "created", "width": 10},
+    ]
+
+
+def test_init_config_form_cancel_on_banner_choice_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    choices = iter(["enabled", None])
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    assert prompt_ui.init_config_form() is None
+
+
 def test_create_form_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: "")
 

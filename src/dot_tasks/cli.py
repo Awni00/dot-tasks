@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 from pathlib import Path
 import sys
-from typing import Annotated
+from typing import Annotated, Sequence
 
+import click
 import typer
 
 from . import render, storage
 from .models import Task, TaskError, TaskValidationError
-from .prompt_ui import choose_command, choose_task, create_form, update_form
+from .prompt_ui import choose_command, choose_task, create_form, init_config_form, update_form
 from .service import TaskService
 
-app = typer.Typer(help="Human-readable and agent-readable task manager")
+REPO_ROOT = Path(__file__).resolve().parents[2]
+BANNER_PATH = REPO_ROOT / "assets" / "banner.txt"
+ACTIVE_CLI_ARGS: tuple[str, ...] | None = None
 
 NoInteractiveOption = Annotated[
     bool,
@@ -28,6 +32,189 @@ def _can_interact() -> bool:
 
 def _can_prompt(interactive_enabled: bool) -> bool:
     return interactive_enabled and _can_interact()
+
+
+def _can_render_rich_list_output() -> bool:
+    return sys.stdout.isatty()
+
+
+def _can_render_banner() -> bool:
+    return sys.stdout.isatty()
+
+
+def _argv_tokens(argv: Sequence[str] | None = None) -> list[str]:
+    if argv is not None:
+        return list(argv)
+    if ACTIVE_CLI_ARGS is not None:
+        return list(ACTIVE_CLI_ARGS)
+    return sys.argv[1:]
+
+
+def _argv_requests_json(argv: Sequence[str] | None = None) -> bool:
+    return "--json" in _argv_tokens(argv)
+
+
+@lru_cache(maxsize=1)
+def _banner_block() -> str | None:
+    try:
+        banner_text = BANNER_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+    lines = banner_text.rstrip("\n").splitlines()
+    if not lines:
+        return None
+    return "\n".join(lines)
+
+
+def _banner_divider_width(block: str) -> int:
+    return max((len(line.rstrip()) for line in block.splitlines()), default=1) or 1
+
+
+def _tasks_root_from_argv(argv: Sequence[str] | None = None) -> Path | None:
+    tokens = _argv_tokens(argv)
+    raw_root: str | None = None
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            break
+        if token == "--tasks-root":
+            if index + 1 >= len(tokens):
+                break
+            raw_root = tokens[index + 1]
+            index += 2
+            continue
+        if token.startswith("--tasks-root="):
+            raw_root = token.split("=", 1)[1]
+        index += 1
+    if raw_root is None:
+        return None
+    root = Path(raw_root).expanduser().resolve()
+    if root.exists():
+        return root
+    return None
+
+
+def _is_root_only_invocation(argv: Sequence[str] | None = None) -> bool:
+    tokens = _argv_tokens(argv)
+    flags_without_values = {
+        "--nointeractive",
+        "--help",
+        "-h",
+        "--install-completion",
+        "--show-completion",
+    }
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            return index == len(tokens) - 1
+        if token == "--tasks-root":
+            index += 2
+            continue
+        if token.startswith("--tasks-root="):
+            index += 1
+            continue
+        if token in flags_without_values:
+            index += 1
+            continue
+        if token.startswith("-"):
+            index += 1
+            continue
+        return False
+    return True
+
+
+def _root_for_banner_lookup(argv: Sequence[str] | None = None) -> Path | None:
+    explicit = _tasks_root_from_argv(argv)
+    if explicit is not None:
+        return explicit
+    root, _ = storage.choose_tasks_root(Path.cwd())
+    return root
+
+
+def _resolve_show_banner_enabled(tasks_root: Path | None) -> bool:
+    if tasks_root is None or not tasks_root.exists():
+        return storage.DEFAULT_SHOW_BANNER
+    return storage.resolve_show_banner(tasks_root)
+
+
+def _should_render_banner(
+    argv: Sequence[str] | None = None,
+    *,
+    tasks_root: Path | None = None,
+) -> bool:
+    if not _can_render_banner():
+        return False
+    if _argv_requests_json(argv):
+        return False
+    if not _is_root_only_invocation(argv):
+        return False
+    root = tasks_root if tasks_root is not None else _root_for_banner_lookup(argv)
+    if not _resolve_show_banner_enabled(root):
+        return False
+    return _banner_block() is not None
+
+
+def _print_banner_divider(width: int) -> None:
+    divider = "-" * max(1, width)
+    try:
+        from rich.text import Text
+    except Exception:
+        typer.echo(divider)
+        return
+    _print_rich(Text(divider, style="bright_black"))
+
+
+def _print_banner(
+    argv: Sequence[str] | None = None,
+    *,
+    tasks_root: Path | None = None,
+) -> None:
+    block = _banner_block()
+    if not block or not _should_render_banner(argv, tasks_root=tasks_root):
+        return
+    typer.echo(block)
+    typer.echo("")
+    _print_banner_divider(_banner_divider_width(block))
+    typer.echo("")
+
+
+class DotTasksTyperGroup(typer.core.TyperGroup):
+    def main(self, *args, **kwargs):
+        global ACTIVE_CLI_ARGS
+
+        cli_args = kwargs.get("args")
+        if cli_args is None and args:
+            candidate = args[0]
+            if isinstance(candidate, (list, tuple)):
+                cli_args = [str(token) for token in candidate]
+        if cli_args is None:
+            ACTIVE_CLI_ARGS = tuple(sys.argv[1:])
+        else:
+            ACTIVE_CLI_ARGS = tuple(str(token) for token in cli_args)
+        try:
+            return super().main(*args, **kwargs)
+        finally:
+            ACTIVE_CLI_ARGS = None
+
+    def get_help(self, ctx: click.Context) -> str:
+        if _should_render_banner():
+            _print_banner()
+        return super().get_help(ctx)
+
+
+app = typer.Typer(
+    cls=DotTasksTyperGroup,
+    help="Human-readable and agent-readable task manager",
+)
+
+
+def _print_rich(renderable) -> None:
+    from rich.console import Console
+
+    Console().print(renderable)
 
 
 def _echo_root_notice(root: Path, multiple_found: bool) -> None:
@@ -189,26 +376,6 @@ def _run_command_picker(ctx: typer.Context, *, tasks_root: Path | None) -> None:
     _invoke_from_shell(ctx, selected, tasks_root=tasks_root)
 
 
-def _prompt_init_interactive_enabled() -> bool:
-    options = [
-        (True, "Enable interactive prompts"),
-        (False, "Disable interactive prompts"),
-    ]
-    typer.echo("Select default interactive setting for this tasks root:")
-    for idx, (_, label) in enumerate(options, start=1):
-        typer.echo(f"{idx}. {label}")
-    while True:
-        raw = typer.prompt("Enter number", default="1")
-        try:
-            index = int(raw)
-        except ValueError:
-            typer.echo("Invalid selection. Enter a number.")
-            continue
-        if 1 <= index <= len(options):
-            return options[index - 1][0]
-        typer.echo("Selection out of range.")
-
-
 @app.callback(invoke_without_command=True)
 def root_callback(
     ctx: typer.Context,
@@ -231,6 +398,7 @@ def root_callback(
         typer.echo("Error: command selection requires an interactive terminal.", err=True)
         raise typer.Exit(code=2)
 
+    _print_banner(tasks_root=root_for_interactive)
     _run_command_picker(ctx, tasks_root=tasks_root)
 
 
@@ -244,26 +412,55 @@ def init_cmd(
     def _inner() -> None:
         svc = _service(tasks_root, init=True)
         svc.ensure_layout()
+        cfg_path = storage.config_path(svc.tasks_root)
 
-        selected_interactive_enabled = (
-            _prompt_init_interactive_enabled()
-            if _can_interact() and not nointeractive
-            else storage.DEFAULT_INTERACTIVE_ENABLED
-        )
-
-        created = storage.write_default_config_if_missing(
-            svc.tasks_root,
-            interactive_enabled=selected_interactive_enabled,
-        )
-        typer.echo(f"Initialized tasks root: {svc.tasks_root}")
-        cfg = storage.config_path(svc.tasks_root)
-        if created:
-            typer.echo(
-                f"Created config: {cfg} "
-                f"(interactive_enabled={selected_interactive_enabled})"
+        if _can_interact() and not nointeractive:
+            current_interactive_enabled = storage.resolve_interactive_enabled(
+                svc.tasks_root,
+                warn=_warn_config,
             )
+            current_show_banner = storage.resolve_show_banner(
+                svc.tasks_root,
+                warn=_warn_config,
+            )
+            current_columns = storage.resolve_list_table_columns(
+                svc.tasks_root,
+                warn=_warn_config,
+            )
+            form = init_config_form(
+                default_interactive_enabled=current_interactive_enabled,
+                default_show_banner=current_show_banner,
+                default_list_column_names=[str(column["name"]) for column in current_columns],
+            )
+            if form is None:
+                _exit_canceled(1)
+            selected_interactive_enabled = bool(form["interactive_enabled"])
+            selected_show_banner = bool(form["show_banner"])
+            selected_list_columns = form["list_columns"]
+            status = storage.upsert_init_config(
+                svc.tasks_root,
+                interactive_enabled=selected_interactive_enabled,
+                list_columns=selected_list_columns,
+                show_banner=selected_show_banner,
+            )
+            typer.echo(f"Initialized tasks root: {svc.tasks_root}")
+            typer.echo(
+                f"{'Created' if status == 'created' else 'Updated'} config: {cfg_path} "
+                f"(interactive_enabled={selected_interactive_enabled}, "
+                f"show_banner={selected_show_banner})"
+            )
+            return
+
+        typer.echo(f"Initialized tasks root: {svc.tasks_root}")
+        if cfg_path.exists():
+            typer.echo(f"Using existing config: {cfg_path}")
         else:
-            typer.echo(f"Using existing config: {cfg}")
+            status = storage.upsert_init_config(svc.tasks_root)
+            typer.echo(
+                f"{'Created' if status == 'created' else 'Updated'} config: {cfg_path} "
+                f"(interactive_enabled={storage.DEFAULT_INTERACTIVE_ENABLED}, "
+                f"show_banner={storage.DEFAULT_SHOW_BANNER})"
+            )
 
     _run_and_handle(_inner)
 
@@ -402,12 +599,15 @@ def list_cmd(
     def _inner() -> None:
         svc = _service(tasks_root)
         tasks = svc.list_tasks(status=status)
+        list_columns = storage.resolve_list_table_columns(svc.tasks_root, warn=_warn_config)
 
         unmet_counts = {task.metadata.task_id: svc.dependency_health(task)[0] for task in tasks}
         if as_json:
             typer.echo(render.render_task_list_json(tasks, unmet_counts))
+        elif _can_render_rich_list_output():
+            _print_rich(render.render_task_list_rich(tasks, unmet_counts, list_columns))
         else:
-            typer.echo(render.render_task_list_plain(tasks, unmet_counts))
+            typer.echo(render.render_task_list_plain(tasks, unmet_counts, list_columns))
 
     _run_and_handle(_inner)
 

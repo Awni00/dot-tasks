@@ -13,6 +13,13 @@ from dot_tasks.cli import app
 runner = CliRunner()
 
 
+def _set_test_banner(monkeypatch: pytest.MonkeyPatch) -> str:
+    banner = "BANNER"
+    monkeypatch.setattr("dot_tasks.cli._banner_block", lambda: banner)
+    monkeypatch.setattr("dot_tasks.cli._print_banner_divider", lambda width: print("-" * width))
+    return banner
+
+
 def _read_task_md(path: Path) -> tuple[dict, str]:
     text = path.read_text(encoding="utf-8")
     assert text.startswith("---\n")
@@ -43,6 +50,14 @@ def test_init_idempotent(tmp_path: Path) -> None:
     assert (root / "trash").is_dir()
     cfg = _read_config(root / "config.yaml")
     assert cfg["settings"]["interactive_enabled"] is True
+    assert cfg["settings"]["show_banner"] is True
+    assert cfg["settings"]["list_table"]["columns"] == [
+        {"name": "task_name", "width": 32},
+        {"name": "priority", "width": 8},
+        {"name": "effort", "width": 6},
+        {"name": "deps", "width": 12},
+        {"name": "created", "width": 10},
+    ]
 
 
 def test_init_nointeractive_creates_default_config(tmp_path: Path) -> None:
@@ -51,19 +66,140 @@ def test_init_nointeractive_creates_default_config(tmp_path: Path) -> None:
     assert result.exit_code == 0
     cfg = _read_config(root / "config.yaml")
     assert cfg["settings"]["interactive_enabled"] is True
+    assert cfg["settings"]["show_banner"] is True
+    assert cfg["settings"]["list_table"]["columns"] == [
+        {"name": "task_name", "width": 32},
+        {"name": "priority", "width": 8},
+        {"name": "effort", "width": 6},
+        {"name": "deps", "width": 12},
+        {"name": "created", "width": 10},
+    ]
 
 
-def test_init_does_not_overwrite_existing_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_init_interactive_uses_form_values(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
-    monkeypatch.setattr("dot_tasks.cli._prompt_init_interactive_enabled", lambda: False)
-    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    monkeypatch.setattr(
+        "dot_tasks.cli.init_config_form",
+        lambda **kwargs: {
+            "interactive_enabled": False,
+            "show_banner": False,
+            "list_columns": [
+                {"name": "task_name", "width": 32},
+                {"name": "status", "width": 10},
+                {"name": "task_id", "width": 14},
+            ],
+        },
+    )
 
-    monkeypatch.setattr("dot_tasks.cli._prompt_init_interactive_enabled", lambda: True)
     result = runner.invoke(app, ["init", "--tasks-root", str(root)])
     assert result.exit_code == 0
     cfg = _read_config(root / "config.yaml")
     assert cfg["settings"]["interactive_enabled"] is False
+    assert cfg["settings"]["show_banner"] is False
+    assert cfg["settings"]["list_table"]["columns"] == [
+        {"name": "task_name", "width": 32},
+        {"name": "status", "width": 10},
+        {"name": "task_id", "width": 14},
+    ]
+
+
+def test_init_interactive_updates_existing_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr(
+        "dot_tasks.cli.init_config_form",
+        lambda **kwargs: {
+            "interactive_enabled": False,
+            "show_banner": False,
+            "list_columns": [
+                {"name": "task_name", "width": 32},
+                {"name": "priority", "width": 8},
+            ],
+        },
+    )
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+
+    monkeypatch.setattr(
+        "dot_tasks.cli.init_config_form",
+        lambda **kwargs: {
+            "interactive_enabled": True,
+            "show_banner": True,
+            "list_columns": [
+                {"name": "task_name", "width": 32},
+                {"name": "task_id", "width": 14},
+            ],
+        },
+    )
+    result = runner.invoke(app, ["init", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    cfg = _read_config(root / "config.yaml")
+    assert cfg["settings"]["interactive_enabled"] is True
+    assert cfg["settings"]["show_banner"] is True
+    assert cfg["settings"]["list_table"]["columns"] == [
+        {"name": "task_name", "width": 32},
+        {"name": "task_id", "width": 14},
+    ]
+    assert "Updated config:" in result.output
+
+
+def test_init_nointeractive_existing_config_unchanged(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root), "--nointeractive"])
+    before = (root / "config.yaml").read_text(encoding="utf-8")
+
+    result = runner.invoke(app, ["init", "--tasks-root", str(root), "--nointeractive"])
+    after = (root / "config.yaml").read_text(encoding="utf-8")
+
+    assert result.exit_code == 0
+    assert "Using existing config:" in result.output
+    assert before == after
+
+
+def test_init_interactive_preserves_unknown_config_keys(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root), "--nointeractive"])
+    (root / "config.yaml").write_text(
+        (
+            "custom_root: keep-me\n"
+            "settings:\n"
+            "  interactive_enabled: true\n"
+            "  show_banner: true\n"
+            "  custom_setting: keep-setting\n"
+            "  list_table:\n"
+            "    columns:\n"
+            "      - name: task_name\n"
+            "        width: 32\n"
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr(
+        "dot_tasks.cli.init_config_form",
+        lambda **kwargs: {
+            "interactive_enabled": False,
+            "show_banner": False,
+            "list_columns": [
+                {"name": "task_name", "width": 32},
+                {"name": "created", "width": 10},
+            ],
+        },
+    )
+    result = runner.invoke(app, ["init", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    cfg = _read_config(root / "config.yaml")
+    assert cfg["custom_root"] == "keep-me"
+    assert cfg["settings"]["custom_setting"] == "keep-setting"
+    assert cfg["settings"]["interactive_enabled"] is False
+    assert cfg["settings"]["show_banner"] is False
+    assert cfg["settings"]["list_table"]["columns"] == [
+        {"name": "task_name", "width": 32},
+        {"name": "created", "width": 10},
+    ]
 
 
 def test_create_rejects_duplicate_name(tmp_path: Path) -> None:
@@ -180,8 +316,243 @@ def test_list_grouped_sorted(tmp_path: Path) -> None:
     lines = [line for line in result.output.splitlines() if line.strip()]
     table_lines = [line for line in lines if "task_name" not in line and not line.startswith("-")]
     joined = "\n".join(table_lines)
-    assert "todo" in joined
-    assert "doing" in joined
+    assert "b" in joined
+    assert "a" in joined
+
+
+def test_list_non_tty_uses_plain_renderer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "plain-view", "--tasks-root", str(root)])
+
+    monkeypatch.setattr("dot_tasks.cli._can_render_rich_list_output", lambda: False)
+    monkeypatch.setattr("dot_tasks.cli.render.render_task_list_plain", lambda tasks, unmet, columns: "PLAIN-OUT")
+    monkeypatch.setattr(
+        "dot_tasks.cli.render.render_task_list_rich",
+        lambda tasks, unmet, columns: pytest.fail("rich renderer should not run"),
+    )
+
+    result = runner.invoke(app, ["list", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert "PLAIN-OUT" in result.output
+
+
+def test_list_tty_uses_rich_renderer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "rich-view", "--tasks-root", str(root)])
+
+    monkeypatch.setattr("dot_tasks.cli._can_render_rich_list_output", lambda: True)
+    monkeypatch.setattr(
+        "dot_tasks.cli.render.render_task_list_rich",
+        lambda tasks, unmet, columns: "RICH-OUT",
+    )
+    captured: list[object] = []
+    monkeypatch.setattr("dot_tasks.cli._print_rich", lambda renderable: captured.append(renderable))
+
+    result = runner.invoke(app, ["list", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert captured == ["RICH-OUT"]
+
+
+def test_help_tty_includes_banner(monkeypatch: pytest.MonkeyPatch) -> None:
+    banner = _set_test_banner(monkeypatch)
+    monkeypatch.setattr("dot_tasks.cli._can_render_banner", lambda: True)
+
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    assert result.output.startswith(banner)
+    assert "Usage:" in result.output
+
+
+def test_root_no_command_flow_prints_banner(monkeypatch: pytest.MonkeyPatch) -> None:
+    banner = _set_test_banner(monkeypatch)
+    monkeypatch.setattr("dot_tasks.cli._can_render_banner", lambda: True)
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr("dot_tasks.cli.choose_command", lambda commands, title: None)
+
+    result = runner.invoke(app, [])
+    assert result.exit_code == 0
+    assert result.output.startswith(banner)
+    assert "Canceled." in result.output
+
+
+def test_subcommand_tty_does_not_print_banner(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    _set_test_banner(monkeypatch)
+    monkeypatch.setattr("dot_tasks.cli._can_render_banner", lambda: True)
+
+    result = runner.invoke(app, ["init", "--tasks-root", str(root), "--nointeractive"])
+    assert result.exit_code == 0
+    assert "BANNER" not in result.output
+    assert "Initialized tasks root:" in result.output
+
+
+def test_json_output_suppresses_banner_even_in_tty(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root), "--nointeractive"])
+    runner.invoke(app, ["create", "json-view", "--tasks-root", str(root)])
+
+    _set_test_banner(monkeypatch)
+    monkeypatch.setattr("dot_tasks.cli._can_render_banner", lambda: True)
+
+    result = runner.invoke(app, ["list", "--json", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert "BANNER" not in result.output
+    assert '"task_name": "json-view"' in result.output
+
+
+def test_subcommand_help_does_not_print_banner(monkeypatch: pytest.MonkeyPatch) -> None:
+    _set_test_banner(monkeypatch)
+    monkeypatch.setattr("dot_tasks.cli._can_render_banner", lambda: True)
+
+    result = runner.invoke(app, ["list", "--help"])
+    assert result.exit_code == 0
+    assert "BANNER" not in result.output
+    assert "Usage:" in result.output
+
+
+def test_root_help_respects_show_banner_false(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root), "--nointeractive"])
+    cfg = _read_config(root / "config.yaml")
+    cfg["settings"]["show_banner"] = False
+    (root / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+
+    _set_test_banner(monkeypatch)
+    monkeypatch.setattr("dot_tasks.cli._can_render_banner", lambda: True)
+
+    result = runner.invoke(app, ["--tasks-root", str(root), "--help"])
+    assert result.exit_code == 0
+    assert "BANNER" not in result.output
+    assert "Usage:" in result.output
+
+
+def test_non_tty_suppresses_banner(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _set_test_banner(monkeypatch)
+    monkeypatch.setattr("dot_tasks.cli._can_render_banner", lambda: False)
+
+    result = runner.invoke(app, ["--help"])
+    assert result.exit_code == 0
+    assert "BANNER" not in result.output
+    assert "Usage:" in result.output
+
+
+def test_list_non_tty_passes_configured_columns(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "plain-view", "--tasks-root", str(root)])
+    (root / "config.yaml").write_text(
+        (
+            "settings:\n"
+            "  interactive_enabled: true\n"
+            "  list_table:\n"
+            "    columns:\n"
+            "      - name: task_name\n"
+            "        width: 20\n"
+            "      - name: created\n"
+            "        width: 10\n"
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("dot_tasks.cli._can_render_rich_list_output", lambda: False)
+    captured_columns: list[list[dict[str, int | str]]] = []
+
+    def _fake_plain(tasks, unmet, columns):
+        captured_columns.append(columns)
+        return "PLAIN-OUT"
+
+    monkeypatch.setattr("dot_tasks.cli.render.render_task_list_plain", _fake_plain)
+
+    result = runner.invoke(app, ["list", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert captured_columns == [[{"name": "task_name", "width": 20}, {"name": "created", "width": 10}]]
+
+
+def test_list_tty_passes_configured_columns(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "rich-view", "--tasks-root", str(root)])
+    (root / "config.yaml").write_text(
+        (
+            "settings:\n"
+            "  interactive_enabled: true\n"
+            "  list_table:\n"
+            "    columns:\n"
+            "      - name: task_name\n"
+            "        width: 22\n"
+            "      - name: deps\n"
+            "        width: 12\n"
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("dot_tasks.cli._can_render_rich_list_output", lambda: True)
+    captured_columns: list[list[dict[str, int | str]]] = []
+
+    def _fake_rich(tasks, unmet, columns):
+        captured_columns.append(columns)
+        return "RICH-OUT"
+
+    monkeypatch.setattr("dot_tasks.cli.render.render_task_list_rich", _fake_rich)
+    captured: list[object] = []
+    monkeypatch.setattr("dot_tasks.cli._print_rich", lambda renderable: captured.append(renderable))
+
+    result = runner.invoke(app, ["list", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert captured == ["RICH-OUT"]
+    assert captured_columns == [[{"name": "task_name", "width": 22}, {"name": "deps", "width": 12}]]
+
+
+def test_list_invalid_column_config_warns_and_uses_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "plain-view", "--tasks-root", str(root)])
+    (root / "config.yaml").write_text(
+        (
+            "settings:\n"
+            "  interactive_enabled: true\n"
+            "  list_table:\n"
+            "    columns:\n"
+            "      - name: not_real\n"
+            "        width: 10\n"
+            "      - name: task_name\n"
+            "        width: 0\n"
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("dot_tasks.cli._can_render_rich_list_output", lambda: False)
+    captured_columns: list[list[dict[str, int | str]]] = []
+
+    def _fake_plain(tasks, unmet, columns):
+        captured_columns.append(columns)
+        return "PLAIN-OUT"
+
+    monkeypatch.setattr("dot_tasks.cli.render.render_task_list_plain", _fake_plain)
+
+    result = runner.invoke(app, ["list", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert "Warning: No valid settings.list_table.columns" in result.output
+    assert captured_columns == [
+        [
+            {"name": "task_name", "width": 32},
+            {"name": "priority", "width": 8},
+            {"name": "effort", "width": 6},
+            {"name": "deps", "width": 12},
+            {"name": "created", "width": 10},
+        ]
+    ]
 
 
 def test_subdirectory_discovers_root(tmp_path: Path) -> None:
@@ -227,7 +598,20 @@ def test_missing_selector_triggers_prompt_picker(monkeypatch: pytest.MonkeyPatch
 
 def test_no_args_interactive_runs_selected_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
-    monkeypatch.setattr("dot_tasks.cli._prompt_init_interactive_enabled", lambda: True)
+    monkeypatch.setattr(
+        "dot_tasks.cli.init_config_form",
+        lambda **kwargs: {
+            "interactive_enabled": True,
+            "show_banner": True,
+            "list_columns": [
+                {"name": "task_name", "width": 32},
+                {"name": "priority", "width": 8},
+                {"name": "effort", "width": 6},
+                {"name": "deps", "width": 12},
+                {"name": "created", "width": 10},
+            ],
+        },
+    )
     monkeypatch.setattr(
         "dot_tasks.cli.choose_command",
         lambda commands, title: "init",
@@ -240,6 +624,21 @@ def test_no_args_interactive_runs_selected_command(monkeypatch: pytest.MonkeyPat
         assert (Path(".tasks") / "todo").is_dir()
         cfg = _read_config(Path(".tasks") / "config.yaml")
         assert cfg["settings"]["interactive_enabled"] is True
+        assert cfg["settings"]["show_banner"] is True
+
+
+def test_init_interactive_cancel_exits_1(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root), "--nointeractive"])
+    before = (root / "config.yaml").read_text(encoding="utf-8")
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr("dot_tasks.cli.init_config_form", lambda **kwargs: None)
+
+    result = runner.invoke(app, ["init", "--tasks-root", str(root)])
+    after = (root / "config.yaml").read_text(encoding="utf-8")
+    assert result.exit_code == 1
+    assert "Canceled." in result.output
+    assert before == after
 
 
 def test_no_args_interactive_cancel_exits_0(monkeypatch: pytest.MonkeyPatch) -> None:
