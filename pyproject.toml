@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "dot-tasks"
 version = "0.1.0"
-description = "Human-readable and agent-readable task manager with CLI/TUI"
+description = "Human-readable and agent-readable task manager with a minimal CLI"
 readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "MIT"}
@@ -13,7 +13,6 @@ authors = [{name = "dot-tasks contributors"}]
 dependencies = [
   "typer>=0.12",
   "PyYAML>=6.0",
-  "textual>=0.60",
 ]
 
 [project.optional-dependencies]

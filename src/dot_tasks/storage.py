@@ -20,8 +20,7 @@ from .models import (
 
 
 TASK_META_KEYS = [f.name for f in fields(TaskMetadata)]
-INTERACTIVE_MODES = ("off", "prompt", "full")
-DEFAULT_INTERACTIVE_MODE = "prompt"
+DEFAULT_INTERACTIVE_ENABLED = True
 
 
 def find_repo_root(start: Path) -> Path | None:
@@ -65,19 +64,26 @@ def config_path(tasks_root: Path) -> Path:
     return tasks_root / "config.yaml"
 
 
-def default_config(mode: str = DEFAULT_INTERACTIVE_MODE) -> dict[str, Any]:
+def default_config(interactive_enabled: bool = DEFAULT_INTERACTIVE_ENABLED) -> dict[str, Any]:
     return {
         "settings": {
-            "interactive_mode": mode,
+            "interactive_enabled": interactive_enabled,
         }
     }
 
 
-def write_default_config_if_missing(tasks_root: Path, mode: str = DEFAULT_INTERACTIVE_MODE) -> bool:
+def write_default_config_if_missing(
+    tasks_root: Path,
+    interactive_enabled: bool = DEFAULT_INTERACTIVE_ENABLED,
+) -> bool:
     path = config_path(tasks_root)
     if path.exists():
         return False
-    payload = yaml.safe_dump(default_config(mode), sort_keys=False, default_flow_style=False)
+    payload = yaml.safe_dump(
+        default_config(interactive_enabled),
+        sort_keys=False,
+        default_flow_style=False,
+    )
     path.write_text(payload, encoding="utf-8")
     return True
 
@@ -99,28 +105,38 @@ def read_config(tasks_root: Path, warn: Callable[[str], None] | None = None) -> 
     return payload
 
 
-def resolve_interactive_mode(tasks_root: Path, warn: Callable[[str], None] | None = None) -> str:
+def resolve_interactive_enabled(
+    tasks_root: Path,
+    warn: Callable[[str], None] | None = None,
+) -> bool:
     data = read_config(tasks_root, warn=warn)
+    supported_top_keys = {"settings"}
+    for key in data.keys():
+        if key not in supported_top_keys and warn is not None:
+            warn(f"Unsupported config key '{key}' in {config_path(tasks_root)}. Ignoring.")
+
     settings = data.get("settings", {})
-    mode = settings.get("interactive_mode") if isinstance(settings, dict) else None
-    if mode is None:
-        return DEFAULT_INTERACTIVE_MODE
-    if not isinstance(mode, str):
+    if not isinstance(settings, dict):
+        if warn is not None:
+            warn(f"Invalid settings section in {config_path(tasks_root)}. Using defaults.")
+        return DEFAULT_INTERACTIVE_ENABLED
+
+    supported_settings_keys = {"interactive_enabled"}
+    for key in settings.keys():
+        if key not in supported_settings_keys and warn is not None:
+            warn(f"Unsupported settings key '{key}' in {config_path(tasks_root)}. Ignoring.")
+
+    interactive_enabled = settings.get("interactive_enabled")
+    if interactive_enabled is None:
+        return DEFAULT_INTERACTIVE_ENABLED
+    if not isinstance(interactive_enabled, bool):
         if warn is not None:
             warn(
-                f"Invalid settings.interactive_mode in {config_path(tasks_root)}. "
-                f"Using default '{DEFAULT_INTERACTIVE_MODE}'."
+                f"Invalid settings.interactive_enabled in {config_path(tasks_root)}. "
+                f"Using default '{DEFAULT_INTERACTIVE_ENABLED}'."
             )
-        return DEFAULT_INTERACTIVE_MODE
-    normalized = mode.strip().lower()
-    if normalized not in INTERACTIVE_MODES:
-        if warn is not None:
-            warn(
-                f"Unknown interactive mode '{mode}' in {config_path(tasks_root)}. "
-                f"Using default '{DEFAULT_INTERACTIVE_MODE}'."
-            )
-        return DEFAULT_INTERACTIVE_MODE
-    return normalized
+        return DEFAULT_INTERACTIVE_ENABLED
+    return interactive_enabled
 
 
 def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:

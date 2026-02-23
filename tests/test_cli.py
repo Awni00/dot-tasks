@@ -42,24 +42,28 @@ def test_init_idempotent(tmp_path: Path) -> None:
     assert (root / "done").is_dir()
     assert (root / "trash").is_dir()
     cfg = _read_config(root / "config.yaml")
-    assert cfg["settings"]["interactive_mode"] == "prompt"
+    assert cfg["settings"]["interactive_enabled"] is True
 
 
-def test_init_mode_override_creates_config(tmp_path: Path) -> None:
+def test_init_nointeractive_creates_default_config(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
-    result = runner.invoke(app, ["init", "--tasks-root", str(root), "--mode", "off"])
+    result = runner.invoke(app, ["init", "--tasks-root", str(root), "--nointeractive"])
     assert result.exit_code == 0
     cfg = _read_config(root / "config.yaml")
-    assert cfg["settings"]["interactive_mode"] == "off"
+    assert cfg["settings"]["interactive_enabled"] is True
 
 
-def test_init_does_not_overwrite_existing_config(tmp_path: Path) -> None:
+def test_init_does_not_overwrite_existing_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
-    runner.invoke(app, ["init", "--tasks-root", str(root), "--mode", "off"])
-    result = runner.invoke(app, ["init", "--tasks-root", str(root), "--mode", "full"])
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr("dot_tasks.cli._prompt_init_interactive_enabled", lambda: False)
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+
+    monkeypatch.setattr("dot_tasks.cli._prompt_init_interactive_enabled", lambda: True)
+    result = runner.invoke(app, ["init", "--tasks-root", str(root)])
     assert result.exit_code == 0
     cfg = _read_config(root / "config.yaml")
-    assert cfg["settings"]["interactive_mode"] == "off"
+    assert cfg["settings"]["interactive_enabled"] is False
 
 
 def test_create_rejects_duplicate_name(tmp_path: Path) -> None:
@@ -208,13 +212,13 @@ def test_delete_soft_and_hard(tmp_path: Path) -> None:
     assert not (_task_dir(root, "todo", "to-hard")).exists()
 
 
-def test_missing_selector_triggers_tui_picker(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_missing_selector_triggers_prompt_picker(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
     runner.invoke(app, ["create", "pick-me", "--tasks-root", str(root)])
 
     monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
-    monkeypatch.setattr("dot_tasks.cli.choose_task", lambda tasks, title, mode: "pick-me")
+    monkeypatch.setattr("dot_tasks.cli.choose_task", lambda tasks, title: "pick-me")
 
     result = runner.invoke(app, ["start", "--tasks-root", str(root)])
     assert result.exit_code == 0
@@ -223,24 +227,24 @@ def test_missing_selector_triggers_tui_picker(monkeypatch: pytest.MonkeyPatch, t
 
 def test_no_args_interactive_runs_selected_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
-    choices = iter(["init", None])
+    monkeypatch.setattr("dot_tasks.cli._prompt_init_interactive_enabled", lambda: True)
     monkeypatch.setattr(
         "dot_tasks.cli.choose_command",
-        lambda commands, title, mode: next(choices),
+        lambda commands, title: "init",
     )
 
     with runner.isolated_filesystem(temp_dir=str(tmp_path)):
         result = runner.invoke(app, [])
-        assert result.exit_code == 1
+        assert result.exit_code == 0
         assert "Initialized tasks root:" in result.output
         assert (Path(".tasks") / "todo").is_dir()
         cfg = _read_config(Path(".tasks") / "config.yaml")
-        assert cfg["settings"]["interactive_mode"] == "prompt"
+        assert cfg["settings"]["interactive_enabled"] is True
 
 
 def test_no_args_interactive_cancel_exits_1(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
-    monkeypatch.setattr("dot_tasks.cli.choose_command", lambda commands, title, mode: None)
+    monkeypatch.setattr("dot_tasks.cli.choose_command", lambda commands, title: None)
 
     result = runner.invoke(app, [])
     assert result.exit_code == 1
@@ -255,33 +259,46 @@ def test_no_args_non_interactive_prints_help_and_error(monkeypatch: pytest.Monke
     assert "interactive terminal" in result.output
 
 
-def test_root_mode_off_prints_help_and_error(tmp_path: Path) -> None:
+def test_root_nointeractive_prints_help_and_exits_zero(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
-    result = runner.invoke(app, ["--tasks-root", str(root), "--mode", "off"])
-    assert result.exit_code == 2
-    assert "interactive mode is disabled" in result.output
+    result = runner.invoke(app, ["--tasks-root", str(root), "--nointeractive"])
+    assert result.exit_code == 0
+    assert "Usage:" in result.output
 
 
-def test_missing_required_arg_with_mode_off_errors(tmp_path: Path) -> None:
+def test_missing_required_arg_with_nointeractive_errors(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
-    result = runner.invoke(app, ["create", "--tasks-root", str(root), "--mode", "off"])
+    result = runner.invoke(app, ["create", "--tasks-root", str(root)])
     assert result.exit_code == 1
     assert "task_name is required in non-interactive mode" in result.output
 
 
-def test_invalid_config_mode_warns_and_falls_back(tmp_path: Path) -> None:
+def test_unsupported_config_key_warns_and_ignores(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
     (root / "config.yaml").write_text(
-        "settings:\n  interactive_mode: broken\n",
+        "settings:\n  interactive_mode: prompt\n",
         encoding="utf-8",
     )
 
-    result = runner.invoke(app, ["list", "--tasks-root", str(root)])
-    assert result.exit_code == 0
-    assert "Warning: Unknown interactive mode" in result.output
+    result = runner.invoke(app, ["create", "--tasks-root", str(root)])
+    assert result.exit_code == 1
+    assert "Warning: Unsupported settings key 'interactive_mode'" in result.output
+
+
+def test_invalid_interactive_enabled_warns_and_falls_back(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    (root / "config.yaml").write_text(
+        "settings:\n  interactive_enabled: maybe\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["create", "--tasks-root", str(root)])
+    assert result.exit_code == 1
+    assert "Warning: Invalid settings.interactive_enabled" in result.output
 
 
 def test_update_interactive_form_replaces_dependencies(
@@ -303,7 +320,7 @@ def test_update_interactive_form_replaces_dependencies(
     monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
     monkeypatch.setattr(
         "dot_tasks.cli.update_form",
-        lambda task, dependency_options, mode: {
+        lambda task, dependency_options: {
             "priority": None,
             "effort": None,
             "owner": task.metadata.owner or "",

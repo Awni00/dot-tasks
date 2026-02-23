@@ -8,7 +8,7 @@
 
 # dot-tasks
 
-`dot-tasks` is a Python CLI/TUI task manager designed to be readable by both humans and AI agents.
+`dot-tasks` is a Python CLI task manager designed to be readable by both humans and AI agents.
 
 ## Installation
 
@@ -68,7 +68,7 @@ Each task lives in `.tasks/<status-bucket>/<created-date>-<task_name>/` and cont
 - `task.md` (canonical metadata frontmatter + task body)
 - `activity.md` (append-only audit log)
 - `plan.md` (created when the task is started)
-- `config.yaml` (interactive mode preferences)
+- `config.yaml` (interactive preferences)
 
 ## Commands
 
@@ -82,30 +82,33 @@ Each task lives in `.tasks/<status-bucket>/<created-date>-<task_name>/` and cont
 - `dot-tasks rename <task_name> <new_task_name>`
 - `dot-tasks delete <task_name> [--hard]`
 
-### Interaction Modes
+### Interactive Behavior
 
-`dot-tasks` supports explicit interaction mode selection with `--mode off|prompt|full`:
+`dot-tasks` uses prompt-based interaction only (no full-screen mode).
 
-- `off`: non-interactive only
-- `prompt`: interactive prompt menus/forms
-- `full`: full-screen Textual UI when available (falls back to prompt)
+Config file:
 
-Mode precedence:
+- `.tasks/config.yaml` stores `settings.interactive_enabled: true|false`
+- `dot-tasks init` creates this file if missing
+- In interactive terminals, `init` prompts for enabled/disabled
+- In non-interactive contexts, `init` defaults to `interactive_enabled: true`
+- Unsupported config keys are ignored with warnings
+- Invalid `interactive_enabled` values warn and fall back to `true`
 
-- CLI `--mode` override wins.
-- Otherwise, `.tasks/config.yaml` value is used (`settings.interactive_mode`).
-- Invalid config values produce a warning and fall back to `prompt`.
+One-off override:
 
-`dot-tasks init` creates `.tasks/config.yaml`. In interactive terminals it asks for mode; in non-interactive contexts it defaults to `prompt`.
+- `--nointeractive` disables prompts for a single command invocation
 
 Behavior:
 
 - `dot-tasks` (no command):
-  - `prompt`/`full`: opens interactive command shell
-  - `off`: prints help + explicit error and exits non-zero
+  - if interaction is enabled and a TTY is present: opens a one-shot command picker
+  - if interaction is disabled: prints help and exits `0`
+  - if interaction is enabled but no TTY is present: prints help + explicit error and exits `2`
 - `dot-tasks <command>`:
-  - if required args are missing and mode is `prompt` or `full`, opens interactive command flow and exits after completion
-  - if required args are provided, runs non-interactive command path
+  - if required args are missing and interaction is enabled: opens one-shot prompts and runs the command
+  - if required args are missing and interaction is disabled: errors
+  - if required args are provided: runs non-interactive command path
 
 ## Interactive Demo
 

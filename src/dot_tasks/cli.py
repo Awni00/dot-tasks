@@ -10,14 +10,14 @@ import typer
 
 from . import render, storage
 from .models import Task, TaskError, TaskValidationError
+from .prompt_ui import choose_command, choose_task, create_form, update_form
 from .service import TaskService
-from .tui import choose_command, choose_task, create_form, show_board, update_form
 
 app = typer.Typer(help="Human-readable and agent-readable task manager")
 
-ModeOption = Annotated[
-    str | None,
-    typer.Option("--mode", help="Interaction mode: off|prompt|full"),
+NoInteractiveOption = Annotated[
+    bool,
+    typer.Option("--nointeractive", help="Disable interactive prompts for this command"),
 ]
 TasksRootOption = Annotated[Path | None, typer.Option("--tasks-root", help="Explicit .tasks path")]
 
@@ -26,12 +26,8 @@ def _can_interact() -> bool:
     return sys.stdin.isatty() and sys.stdout.isatty()
 
 
-def _interactive_enabled(mode: str) -> bool:
-    return mode in {"prompt", "full"}
-
-
-def _can_interact_in_mode(mode: str) -> bool:
-    return _interactive_enabled(mode) and _can_interact()
+def _can_prompt(interactive_enabled: bool) -> bool:
+    return interactive_enabled and _can_interact()
 
 
 def _echo_root_notice(root: Path, multiple_found: bool) -> None:
@@ -44,23 +40,12 @@ def _warn_config(message: str) -> None:
     typer.echo(f"Warning: {message}", err=True)
 
 
-def _normalize_mode(mode: str | None) -> str | None:
-    if mode is None:
-        return None
-    normalized = mode.strip().lower()
-    if normalized not in storage.INTERACTIVE_MODES:
-        allowed = ", ".join(storage.INTERACTIVE_MODES)
-        raise typer.BadParameter(f"invalid mode '{mode}', expected one of: {allowed}")
-    return normalized
-
-
-def _resolve_mode(tasks_root: Path | None, mode_override: str | None) -> str:
-    explicit = _normalize_mode(mode_override)
-    if explicit is not None:
-        return explicit
+def _resolve_interactive_enabled(tasks_root: Path | None, nointeractive: bool) -> bool:
+    if nointeractive:
+        return False
     if tasks_root is None:
-        return storage.DEFAULT_INTERACTIVE_MODE
-    return storage.resolve_interactive_mode(tasks_root, warn=_warn_config)
+        return storage.DEFAULT_INTERACTIVE_ENABLED
+    return storage.resolve_interactive_enabled(tasks_root, warn=_warn_config)
 
 
 def _resolve_existing_root(tasks_root: Path | None) -> Path:
@@ -93,7 +78,7 @@ def _resolve_init_root(tasks_root: Path | None) -> Path:
     return default_root
 
 
-def _root_for_mode_lookup(tasks_root: Path | None) -> Path | None:
+def _root_for_interactive_lookup(tasks_root: Path | None) -> Path | None:
     if tasks_root is not None:
         root = tasks_root.resolve()
         if root.exists():
@@ -115,16 +100,16 @@ def _select_task_if_missing(
     task_name: str | None,
     prompt: str,
     *,
-    mode: str,
+    interactive_enabled: bool,
 ) -> str:
     if task_name:
         return task_name
     tasks = svc.list_tasks()
     if not tasks:
         raise TaskValidationError("No tasks available.")
-    if not _can_interact_in_mode(mode):
+    if not _can_prompt(interactive_enabled):
         raise TaskValidationError("task_name is required in non-interactive mode")
-    selected = choose_task(tasks, title=prompt, mode=mode)
+    selected = choose_task(tasks, title=prompt)
     if not selected:
         raise typer.Exit(code=1)
     return selected
@@ -174,13 +159,12 @@ def _invoke_from_shell(
     ctx: typer.Context,
     command_name: str,
     *,
-    mode: str,
     tasks_root: Path | None,
 ) -> None:
     command = _find_command(command_name)
     if command is None or command.callback is None:
         return
-    kwargs: dict[str, object] = {"mode": mode}
+    kwargs: dict[str, object] = {}
     if tasks_root is not None:
         kwargs["tasks_root"] = tasks_root
     try:
@@ -192,26 +176,20 @@ def _invoke_from_shell(
         ctx.invoke(command.callback, **fallback)
 
 
-def _run_command_shell(ctx: typer.Context, *, mode: str, tasks_root: Path | None) -> None:
+def _run_command_picker(ctx: typer.Context, *, tasks_root: Path | None) -> None:
     choices = _command_choices()
-    while True:
-        selected = choose_command(choices, title="Select a dot-tasks command", mode=mode)
-        if not selected:
-            raise typer.Exit(code=1)
-        try:
-            _invoke_from_shell(ctx, selected, mode=mode, tasks_root=tasks_root)
-        except typer.Exit:
-            # Keep shell running so users can continue navigating between commands.
-            continue
+    selected = choose_command(choices, title="Select a dot-tasks command")
+    if not selected:
+        raise typer.Exit(code=1)
+    _invoke_from_shell(ctx, selected, tasks_root=tasks_root)
 
 
-def _prompt_init_mode() -> str:
+def _prompt_init_interactive_enabled() -> bool:
     options = [
-        ("prompt", "Prompt mode"),
-        ("full", "Full-screen mode"),
-        ("off", "Non-interactive mode"),
+        (True, "Enable interactive prompts"),
+        (False, "Disable interactive prompts"),
     ]
-    typer.echo("Select default interactive mode for this tasks root:")
+    typer.echo("Select default interactive setting for this tasks root:")
     for idx, (_, label) in enumerate(options, start=1):
         typer.echo(f"{idx}. {label}")
     while True:
@@ -229,32 +207,31 @@ def _prompt_init_mode() -> str:
 @app.callback(invoke_without_command=True)
 def root_callback(
     ctx: typer.Context,
-    mode: ModeOption = None,
+    nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
 ) -> None:
-    """Open an interactive command shell when no command is provided."""
+    """Open an interactive command picker when no command is provided."""
     if ctx.invoked_subcommand is not None:
         return
 
-    root_for_mode = _root_for_mode_lookup(tasks_root)
-    local_mode = _resolve_mode(root_for_mode, mode)
+    root_for_interactive = _root_for_interactive_lookup(tasks_root)
+    interactive_enabled = _resolve_interactive_enabled(root_for_interactive, nointeractive=nointeractive)
 
-    if local_mode == "off":
+    if not interactive_enabled:
         typer.echo(ctx.get_help())
-        typer.echo("Error: interactive mode is disabled (mode=off).", err=True)
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=0)
 
     if not _can_interact():
         typer.echo(ctx.get_help())
         typer.echo("Error: command selection requires an interactive terminal.", err=True)
         raise typer.Exit(code=2)
 
-    _run_command_shell(ctx, mode=local_mode, tasks_root=tasks_root)
+    _run_command_picker(ctx, tasks_root=tasks_root)
 
 
 @app.command("init")
 def init_cmd(
-    mode: ModeOption = None,
+    nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
 ) -> None:
     """Initialize .tasks directory layout."""
@@ -263,15 +240,23 @@ def init_cmd(
         svc = _service(tasks_root, init=True)
         svc.ensure_layout()
 
-        selected_mode = _normalize_mode(mode)
-        if selected_mode is None:
-            selected_mode = _prompt_init_mode() if _can_interact() else storage.DEFAULT_INTERACTIVE_MODE
+        selected_interactive_enabled = (
+            _prompt_init_interactive_enabled()
+            if _can_interact() and not nointeractive
+            else storage.DEFAULT_INTERACTIVE_ENABLED
+        )
 
-        created = storage.write_default_config_if_missing(svc.tasks_root, mode=selected_mode)
+        created = storage.write_default_config_if_missing(
+            svc.tasks_root,
+            interactive_enabled=selected_interactive_enabled,
+        )
         typer.echo(f"Initialized tasks root: {svc.tasks_root}")
         cfg = storage.config_path(svc.tasks_root)
         if created:
-            typer.echo(f"Created config: {cfg} (interactive_mode={selected_mode})")
+            typer.echo(
+                f"Created config: {cfg} "
+                f"(interactive_enabled={selected_interactive_enabled})"
+            )
         else:
             typer.echo(f"Using existing config: {cfg}")
 
@@ -287,16 +272,19 @@ def create_cmd(
     tag: Annotated[list[str], typer.Option("--tag", help="Can be repeated")] = [],
     depends_on: Annotated[list[str], typer.Option("--depends-on", help="Task name or task_id")] = [],
     summary: Annotated[str, typer.Option("--summary")] = "",
-    mode: ModeOption = None,
+    nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
 ) -> None:
     """Create a task in todo."""
 
     def _inner() -> None:
         svc = _service(tasks_root)
-        local_mode = _resolve_mode(svc.tasks_root, mode)
+        interactive_enabled = _resolve_interactive_enabled(
+            svc.tasks_root,
+            nointeractive=nointeractive,
+        )
 
-        open_form = task_name is None and _can_interact_in_mode(local_mode)
+        open_form = task_name is None and _can_prompt(interactive_enabled)
         if task_name is None and not open_form:
             raise TaskValidationError("task_name is required in non-interactive mode")
 
@@ -313,7 +301,6 @@ def create_cmd(
             form = create_form(
                 default_name=task_name,
                 dependency_options=dependency_options,
-                mode=local_mode,
             )
             if form is None:
                 raise typer.Exit(code=1)
@@ -346,15 +333,23 @@ def create_cmd(
 def start_cmd(
     task_name: Annotated[str | None, typer.Argument(help="Task name or task_id")] = None,
     force: Annotated[bool, typer.Option("--force", help="Ignore unmet dependencies")] = False,
-    mode: ModeOption = None,
+    nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
 ) -> None:
     """Move task to doing and initialize plan.md."""
 
     def _inner() -> None:
         svc = _service(tasks_root)
-        local_mode = _resolve_mode(svc.tasks_root, mode)
-        selector = _select_task_if_missing(svc, task_name, "Select a task to start", mode=local_mode)
+        interactive_enabled = _resolve_interactive_enabled(
+            svc.tasks_root,
+            nointeractive=nointeractive,
+        )
+        selector = _select_task_if_missing(
+            svc,
+            task_name,
+            "Select a task to start",
+            interactive_enabled=interactive_enabled,
+        )
         task = svc.start_task(selector, force=force)
         typer.echo(f"Started: {task.metadata.task_name}")
 
@@ -364,15 +359,23 @@ def start_cmd(
 @app.command("complete")
 def complete_cmd(
     task_name: Annotated[str | None, typer.Argument(help="Task name or task_id")] = None,
-    mode: ModeOption = None,
+    nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
 ) -> None:
     """Mark task completed and move to done."""
 
     def _inner() -> None:
         svc = _service(tasks_root)
-        local_mode = _resolve_mode(svc.tasks_root, mode)
-        selector = _select_task_if_missing(svc, task_name, "Select a task to complete", mode=local_mode)
+        interactive_enabled = _resolve_interactive_enabled(
+            svc.tasks_root,
+            nointeractive=nointeractive,
+        )
+        selector = _select_task_if_missing(
+            svc,
+            task_name,
+            "Select a task to complete",
+            interactive_enabled=interactive_enabled,
+        )
         task = svc.complete_task(selector)
         typer.echo(f"Completed: {task.metadata.task_name}")
 
@@ -386,20 +389,14 @@ def list_cmd(
         typer.Argument(help="Optional status filter: todo, doing, done", show_default=False),
     ] = None,
     as_json: Annotated[bool, typer.Option("--json")] = False,
-    mode: ModeOption = None,
+    nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
 ) -> None:
     """List tasks grouped by status and sorted by priority/date."""
 
     def _inner() -> None:
         svc = _service(tasks_root)
-        local_mode = _resolve_mode(svc.tasks_root, mode)
         tasks = svc.list_tasks(status=status)
-
-        interactive_view = status is None and not as_json and _can_interact_in_mode(local_mode)
-        if interactive_view:
-            show_board(tasks, mode=local_mode)
-            return
 
         unmet_counts = {task.metadata.task_id: svc.dependency_health(task)[0] for task in tasks}
         if as_json:
@@ -414,15 +411,23 @@ def list_cmd(
 def view_cmd(
     task_name: Annotated[str | None, typer.Argument(help="Task name or task_id")] = None,
     as_json: Annotated[bool, typer.Option("--json")] = False,
-    mode: ModeOption = None,
+    nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
 ) -> None:
     """Show a detailed view of one task."""
 
     def _inner() -> None:
         svc = _service(tasks_root)
-        local_mode = _resolve_mode(svc.tasks_root, mode)
-        selector = _select_task_if_missing(svc, task_name, "Select a task to view", mode=local_mode)
+        interactive_enabled = _resolve_interactive_enabled(
+            svc.tasks_root,
+            nointeractive=nointeractive,
+        )
+        selector = _select_task_if_missing(
+            svc,
+            task_name,
+            "Select a task to view",
+            interactive_enabled=interactive_enabled,
+        )
         task = svc.view_task(selector)
         deps = svc.dependency_rows(task)
         if as_json:
@@ -444,14 +449,17 @@ def update_cmd(
     depends_on: Annotated[list[str], typer.Option("--depends-on")] = [],
     clear_depends_on: Annotated[bool, typer.Option("--clear-depends-on")] = False,
     note: Annotated[str | None, typer.Option("--note")] = None,
-    mode: ModeOption = None,
+    nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
 ) -> None:
     """Update task metadata and append activity."""
 
     def _inner() -> None:
         svc = _service(tasks_root)
-        local_mode = _resolve_mode(svc.tasks_root, mode)
+        interactive_enabled = _resolve_interactive_enabled(
+            svc.tasks_root,
+            nointeractive=nointeractive,
+        )
 
         has_edit_flags = any(
             [
@@ -466,7 +474,12 @@ def update_cmd(
             ]
         )
 
-        selector = _select_task_if_missing(svc, task_name, "Select a task to update", mode=local_mode)
+        selector = _select_task_if_missing(
+            svc,
+            task_name,
+            "Select a task to update",
+            interactive_enabled=interactive_enabled,
+        )
         selected_task = svc.view_task(selector)
 
         local_priority = priority
@@ -477,13 +490,13 @@ def update_cmd(
         local_replace_depends = clear_depends_on
         local_note = note
 
-        open_form = _can_interact_in_mode(local_mode) and (task_name is None or not has_edit_flags)
+        open_form = _can_prompt(interactive_enabled) and (task_name is None or not has_edit_flags)
         if open_form:
             dependency_options = _dependency_choices(
                 svc.list_tasks(),
                 exclude_task_id=selected_task.metadata.task_id,
             )
-            form = update_form(selected_task, dependency_options=dependency_options, mode=local_mode)
+            form = update_form(selected_task, dependency_options=dependency_options)
             if form is None:
                 raise typer.Exit(code=1)
             local_priority = form.get("priority")
@@ -514,18 +527,26 @@ def update_cmd(
 def rename_cmd(
     task_name: Annotated[str | None, typer.Argument(help="Task name or task_id")] = None,
     new_task_name: Annotated[str | None, typer.Argument(help="New unique kebab-case task name")] = None,
-    mode: ModeOption = None,
+    nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
 ) -> None:
     """Rename a task and update metadata."""
 
     def _inner() -> None:
         svc = _service(tasks_root)
-        local_mode = _resolve_mode(svc.tasks_root, mode)
-        selector = _select_task_if_missing(svc, task_name, "Select a task to rename", mode=local_mode)
+        interactive_enabled = _resolve_interactive_enabled(
+            svc.tasks_root,
+            nointeractive=nointeractive,
+        )
+        selector = _select_task_if_missing(
+            svc,
+            task_name,
+            "Select a task to rename",
+            interactive_enabled=interactive_enabled,
+        )
         target_name = new_task_name
         if not target_name:
-            if not _can_interact_in_mode(local_mode):
+            if not _can_prompt(interactive_enabled):
                 raise TaskValidationError("new_task_name is required in non-interactive mode")
             target_name = typer.prompt("new_task_name")
         task = svc.rename_task(selector, target_name)
@@ -538,15 +559,23 @@ def rename_cmd(
 def delete_cmd(
     task_name: Annotated[str | None, typer.Argument(help="Task name or task_id")] = None,
     hard: Annotated[bool, typer.Option("--hard", help="Permanently remove task folder")] = False,
-    mode: ModeOption = None,
+    nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
 ) -> None:
     """Delete a task (soft-delete to trash by default)."""
 
     def _inner() -> None:
         svc = _service(tasks_root)
-        local_mode = _resolve_mode(svc.tasks_root, mode)
-        selector = _select_task_if_missing(svc, task_name, "Select a task to delete", mode=local_mode)
+        interactive_enabled = _resolve_interactive_enabled(
+            svc.tasks_root,
+            nointeractive=nointeractive,
+        )
+        selector = _select_task_if_missing(
+            svc,
+            task_name,
+            "Select a task to delete",
+            interactive_enabled=interactive_enabled,
+        )
         svc.delete_task(selector, hard=hard)
         if hard:
             typer.echo(f"Hard deleted: {selector}")
