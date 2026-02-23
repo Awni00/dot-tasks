@@ -109,7 +109,7 @@ Each task lives in `.tasks/<status-bucket>/<created-date>-<task_name>/` and cont
 
 | Command | Purpose | Typical usage |
 | --- | --- | --- |
-| `init` | Create `.tasks/` and write/update managed config settings. | `dot-tasks init` |
+| `init` | Create `.tasks/` and write/update managed config settings; can also append workflow guidance section AGENTS.md and install the skill via `npx skills`. | `dot-tasks init` |
 | `create` | Add a new task to `todo/`. | `dot-tasks create <task_name>` |
 | `start` | Move a task to `doing/` and create `plan.md`. | `dot-tasks start <task_name>` |
 | `complete` | Move a task to `done/`. | `dot-tasks complete <task_name>` |
@@ -123,7 +123,7 @@ Each task lives in `.tasks/<status-bucket>/<created-date>-<task_name>/` and cont
 
 Reusable reference assets for agent workflows live in `agent-tools/`.
 
-- `agent-tools/README.md` explains how to install and use the skill and snippets.
+- `agent-tools/README.md` explains how to install and use the skill and AGENTS section source.
 - `agent-tools/skills/dot-tasks/SKILL.md` is the canonical `dot-tasks` skill file.
 
 These files are for package users integrating `dot-tasks` into their own repos.

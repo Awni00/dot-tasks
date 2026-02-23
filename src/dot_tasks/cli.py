@@ -4,13 +4,14 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
+import subprocess
 import sys
 from typing import Annotated, Sequence
 
 import click
 import typer
 
-from . import render, storage
+from . import agents_snippet, render, storage
 from .models import Task, TaskError, TaskValidationError
 from .prompt_ui import choose_command, choose_task, create_form, init_config_form, update_form
 from .service import TaskService
@@ -24,6 +25,17 @@ NoInteractiveOption = Annotated[
     typer.Option("--nointeractive", help="Disable interactive prompts for this command"),
 ]
 TasksRootOption = Annotated[Path | None, typer.Option("--tasks-root", help="Explicit .tasks path")]
+AgentsFileOption = Annotated[
+    Path | None,
+    typer.Option("--agents-file", help="Target AGENTS policy file path"),
+]
+AppendAgentsSnippetOption = Annotated[
+    bool,
+    typer.Option(
+        "--append-agents-snippet",
+        help="Append dot-tasks task-management section to AGENTS.md file",
+    ),
+]
 
 
 def _can_interact() -> bool:
@@ -333,6 +345,52 @@ def _exit_canceled(code: int) -> None:
     raise typer.Exit(code=code)
 
 
+def _append_agents_snippet(
+    project_root: Path,
+    *,
+    agents_file: Path | None,
+) -> tuple[str, Path]:
+    try:
+        snippet = agents_snippet.load_task_management_snippet()
+        target = agents_snippet.resolve_agents_file(project_root, agents_file)
+        status = agents_snippet.upsert_task_management_snippet(target, snippet)
+    except (OSError, ValueError) as exc:
+        raise TaskValidationError(f"Unable to append AGENTS snippet: {exc}") from exc
+    return status, target
+
+
+def _prompt_install_skill() -> bool:
+    try:
+        return bool(typer.confirm("Install dot-tasks skill via npx skills now?", default=False))
+    except (click.Abort, EOFError, KeyboardInterrupt):
+        # If prompt input is unavailable/canceled, default to skipping install.
+        return False
+
+
+def _install_dot_tasks_skill_via_npx() -> tuple[bool, str]:
+    cmd = ["npx", "skills", "add", "Awni00/dot-tasks", "--skill", "dot-tasks"]
+    cmd_text = " ".join(cmd)
+    try:
+        result = subprocess.run(cmd, check=False)
+    except FileNotFoundError:
+        return (
+            False,
+            f"`npx` not found. Install Node.js/npm first, then run: {cmd_text}",
+        )
+    except OSError as exc:
+        return (
+            False,
+            f"Unable to run `{cmd_text}` ({exc}). You can retry manually.",
+        )
+
+    if result.returncode == 0:
+        return True, "Installed dot-tasks skill from Awni00/dot-tasks."
+    return (
+        False,
+        f"`{cmd_text}` exited with code {result.returncode}. You can retry manually.",
+    )
+
+
 def _command_choices() -> list[tuple[str, str]]:
     choices: list[tuple[str, str]] = []
     for command in app.registered_commands:
@@ -410,6 +468,8 @@ def root_callback(
 def init_cmd(
     nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
+    append_agents_snippet: AppendAgentsSnippetOption = False,
+    agents_file: AgentsFileOption = None,
 ) -> None:
     """Initialize .tasks directory layout."""
 
@@ -417,8 +477,16 @@ def init_cmd(
         svc = _service(tasks_root, init=True)
         svc.ensure_layout()
         cfg_path = storage.config_path(svc.tasks_root)
+        interactive_session = _can_interact() and not nointeractive
+        should_append_agents_snippet = append_agents_snippet
+        selected_agents_file = agents_file
 
-        if _can_interact() and not nointeractive:
+        if nointeractive and agents_file is not None and not append_agents_snippet:
+            raise TaskValidationError(
+                "--agents-file requires --append-agents-snippet when --nointeractive is used"
+            )
+
+        if interactive_session:
             current_interactive_enabled = storage.resolve_interactive_enabled(
                 svc.tasks_root,
                 warn=_warn_config,
@@ -435,12 +503,18 @@ def init_cmd(
                 default_interactive_enabled=current_interactive_enabled,
                 default_show_banner=current_show_banner,
                 default_list_column_names=[str(column["name"]) for column in current_columns],
+                default_append_agents_snippet=append_agents_snippet,
+                default_agents_file=str(agents_file) if agents_file is not None else "AGENTS.md",
             )
             if form is None:
                 _exit_canceled(1)
             selected_interactive_enabled = bool(form["interactive_enabled"])
             selected_show_banner = bool(form["show_banner"])
             selected_list_columns = form["list_columns"]
+            should_append_agents_snippet = bool(form.get("append_agents_snippet", append_agents_snippet))
+            selected_agents_value = form.get("agents_file")
+            if selected_agents_value:
+                selected_agents_file = Path(str(selected_agents_value))
             status = storage.upsert_init_config(
                 svc.tasks_root,
                 interactive_enabled=selected_interactive_enabled,
@@ -453,18 +527,37 @@ def init_cmd(
                 f"(interactive_enabled={selected_interactive_enabled}, "
                 f"show_banner={selected_show_banner})"
             )
-            return
-
-        typer.echo(f"Initialized tasks root: {svc.tasks_root}")
-        if cfg_path.exists():
-            typer.echo(f"Using existing config: {cfg_path}")
         else:
-            status = storage.upsert_init_config(svc.tasks_root)
-            typer.echo(
-                f"{'Created' if status == 'created' else 'Updated'} config: {cfg_path} "
-                f"(interactive_enabled={storage.DEFAULT_INTERACTIVE_ENABLED}, "
-                f"show_banner={storage.DEFAULT_SHOW_BANNER})"
+            typer.echo(f"Initialized tasks root: {svc.tasks_root}")
+            if cfg_path.exists():
+                typer.echo(f"Using existing config: {cfg_path}")
+            else:
+                status = storage.upsert_init_config(svc.tasks_root)
+                typer.echo(
+                    f"{'Created' if status == 'created' else 'Updated'} config: {cfg_path} "
+                    f"(interactive_enabled={storage.DEFAULT_INTERACTIVE_ENABLED}, "
+                    f"show_banner={storage.DEFAULT_SHOW_BANNER})"
+                )
+
+        if should_append_agents_snippet:
+            status, target = _append_agents_snippet(
+                svc.tasks_root.parent,
+                agents_file=selected_agents_file,
             )
+            action = {
+                "created": "Created",
+                "updated": "Updated",
+                "appended": "Appended",
+                "unchanged": "Unchanged",
+            }[status]
+            typer.echo(f"{action} AGENTS snippet: {target}")
+
+        if interactive_session and _prompt_install_skill():
+            installed, message = _install_dot_tasks_skill_via_npx()
+            if installed:
+                typer.echo(message)
+            else:
+                typer.echo(f"Warning: {message}", err=True)
 
     _run_and_handle(_inner)
 

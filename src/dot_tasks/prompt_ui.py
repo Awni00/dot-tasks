@@ -257,6 +257,8 @@ def init_config_form(
     default_interactive_enabled: bool = storage.DEFAULT_INTERACTIVE_ENABLED,
     default_show_banner: bool = storage.DEFAULT_SHOW_BANNER,
     default_list_column_names: list[str] | None = None,
+    default_append_agents_snippet: bool = False,
+    default_agents_file: str = "AGENTS.md",
 ) -> dict[str, Any] | None:
     default_interactive_value = "enabled" if default_interactive_enabled else "disabled"
     interactive_choice = _prompt_single_choice(
@@ -308,11 +310,27 @@ def init_config_form(
         typer.echo("Warning: no list columns selected; using defaults.", err=True)
         selected_columns = fallback_column_names
 
+    append_agents_snippet = _prompt_yes_no(
+        "Append dot-tasks task-management section to AGENTS.md file?",
+        default=default_append_agents_snippet,
+    )
+    if append_agents_snippet is None:
+        return None
+
+    agents_file: str | None = None
+    if append_agents_snippet:
+        selected_agents_file = _safe_prompt("AGENTS file path", default=default_agents_file)
+        if selected_agents_file is None:
+            return None
+        agents_file = selected_agents_file.strip() or default_agents_file
+
     list_columns = [{"name": name, "width": width_map[name]} for name in selected_columns]
     return {
         "interactive_enabled": interactive_choice == "enabled",
         "show_banner": banner_choice == "enabled",
         "list_columns": list_columns,
+        "append_agents_snippet": append_agents_snippet,
+        "agents_file": agents_file,
     }
 
 

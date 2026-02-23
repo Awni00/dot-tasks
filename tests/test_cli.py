@@ -13,6 +13,11 @@ from dot_tasks.cli import app
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def _disable_skill_install_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("dot_tasks.cli._prompt_install_skill", lambda: False)
+
+
 def _set_test_banner(monkeypatch: pytest.MonkeyPatch) -> str:
     banner = "BANNER"
     monkeypatch.setattr("dot_tasks.cli._banner_block", lambda: banner)
@@ -156,6 +161,64 @@ def test_init_nointeractive_existing_config_unchanged(tmp_path: Path) -> None:
     assert before == after
 
 
+def test_init_nointeractive_append_agents_snippet_creates_default_agents_file(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    result = runner.invoke(
+        app,
+        [
+            "init",
+            "--tasks-root",
+            str(root),
+            "--nointeractive",
+            "--append-agents-snippet",
+        ],
+    )
+    assert result.exit_code == 0
+    agents_file = tmp_path / "AGENTS.md"
+    assert agents_file.exists()
+    content = agents_file.read_text(encoding="utf-8")
+    assert "<!-- dot-tasks:begin task-management -->" in content
+    assert "## Task management with `dot-tasks`" in content
+    assert "Created AGENTS snippet:" in result.output
+
+
+def test_init_nointeractive_agents_file_requires_append_flag(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    result = runner.invoke(
+        app,
+        [
+            "init",
+            "--tasks-root",
+            str(root),
+            "--nointeractive",
+            "--agents-file",
+            "TEAM_AGENTS.md",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "--agents-file requires --append-agents-snippet" in result.output
+
+
+def test_init_nointeractive_append_agents_snippet_custom_file(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    result = runner.invoke(
+        app,
+        [
+            "init",
+            "--tasks-root",
+            str(root),
+            "--nointeractive",
+            "--append-agents-snippet",
+            "--agents-file",
+            "policy/TEAM_AGENTS.md",
+        ],
+    )
+    assert result.exit_code == 0
+    agents_file = tmp_path / "policy" / "TEAM_AGENTS.md"
+    assert agents_file.exists()
+    assert "<!-- dot-tasks:begin task-management -->" in agents_file.read_text(encoding="utf-8")
+
+
 def test_init_interactive_preserves_unknown_config_keys(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -200,6 +263,146 @@ def test_init_interactive_preserves_unknown_config_keys(
         {"name": "task_name", "width": 32},
         {"name": "created", "width": 10},
     ]
+
+
+def test_init_interactive_uses_form_agents_file_when_append_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / ".tasks"
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr(
+        "dot_tasks.cli.init_config_form",
+        lambda **kwargs: {
+            "interactive_enabled": True,
+            "show_banner": True,
+            "list_columns": [
+                {"name": "task_name", "width": 32},
+                {"name": "priority", "width": 8},
+                {"name": "effort", "width": 6},
+                {"name": "deps", "width": 12},
+                {"name": "created", "width": 10},
+            ],
+            "append_agents_snippet": True,
+            "agents_file": "TEAM_AGENTS.md",
+        },
+    )
+
+    result = runner.invoke(app, ["init", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    agents_file = tmp_path / "TEAM_AGENTS.md"
+    assert agents_file.exists()
+    assert "<!-- dot-tasks:begin task-management -->" in agents_file.read_text(encoding="utf-8")
+
+
+def test_interactive_init_install_skill_yes_success(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / ".tasks"
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr(
+        "dot_tasks.cli.init_config_form",
+        lambda **kwargs: {
+            "interactive_enabled": True,
+            "show_banner": True,
+            "list_columns": [
+                {"name": "task_name", "width": 32},
+                {"name": "priority", "width": 8},
+                {"name": "effort", "width": 6},
+                {"name": "deps", "width": 12},
+                {"name": "created", "width": 10},
+            ],
+            "append_agents_snippet": False,
+            "agents_file": None,
+        },
+    )
+    monkeypatch.setattr("dot_tasks.cli._prompt_install_skill", lambda: True)
+    monkeypatch.setattr(
+        "dot_tasks.cli._install_dot_tasks_skill_via_npx",
+        lambda: (True, "Installed dot-tasks skill from Awni00/dot-tasks."),
+    )
+
+    result = runner.invoke(app, ["init", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert "Installed dot-tasks skill from Awni00/dot-tasks." in result.output
+
+
+def test_interactive_init_install_skill_yes_failure_warns(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / ".tasks"
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr(
+        "dot_tasks.cli.init_config_form",
+        lambda **kwargs: {
+            "interactive_enabled": True,
+            "show_banner": True,
+            "list_columns": [
+                {"name": "task_name", "width": 32},
+                {"name": "priority", "width": 8},
+                {"name": "effort", "width": 6},
+                {"name": "deps", "width": 12},
+                {"name": "created", "width": 10},
+            ],
+            "append_agents_snippet": False,
+            "agents_file": None,
+        },
+    )
+    monkeypatch.setattr("dot_tasks.cli._prompt_install_skill", lambda: True)
+    monkeypatch.setattr(
+        "dot_tasks.cli._install_dot_tasks_skill_via_npx",
+        lambda: (False, "mock install failure"),
+    )
+
+    result = runner.invoke(app, ["init", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert "Warning: mock install failure" in result.output
+
+
+def test_interactive_init_install_skill_no_skips(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / ".tasks"
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr(
+        "dot_tasks.cli.init_config_form",
+        lambda **kwargs: {
+            "interactive_enabled": True,
+            "show_banner": True,
+            "list_columns": [
+                {"name": "task_name", "width": 32},
+                {"name": "priority", "width": 8},
+                {"name": "effort", "width": 6},
+                {"name": "deps", "width": 12},
+                {"name": "created", "width": 10},
+            ],
+            "append_agents_snippet": False,
+            "agents_file": None,
+        },
+    )
+    monkeypatch.setattr("dot_tasks.cli._prompt_install_skill", lambda: False)
+    monkeypatch.setattr(
+        "dot_tasks.cli._install_dot_tasks_skill_via_npx",
+        lambda: pytest.fail("install helper should not run when prompt answer is no"),
+    )
+
+    result = runner.invoke(app, ["init", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+
+
+def test_nointeractive_init_never_attempts_skill_install(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    monkeypatch.setattr("dot_tasks.cli._prompt_install_skill", lambda: True)
+    monkeypatch.setattr(
+        "dot_tasks.cli._install_dot_tasks_skill_via_npx",
+        lambda: pytest.fail("install helper should not run in --nointeractive mode"),
+    )
+
+    result = runner.invoke(app, ["init", "--tasks-root", str(root), "--nointeractive"])
+    assert result.exit_code == 0
 
 
 def test_create_rejects_duplicate_name(tmp_path: Path) -> None:

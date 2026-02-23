@@ -187,7 +187,7 @@ def test_init_config_form_falls_back_to_numeric_on_selector_unavailable(
         "select_many",
         lambda *args, **kwargs: (_ for _ in ()).throw(selector_ui.SelectorUnavailableError("fallback")),
     )
-    prompt_values = iter(["1", "1", "1,4,5"])
+    prompt_values = iter(["1", "1", "1,4,5", "n"])
     monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: next(prompt_values))
 
     payload = prompt_ui.init_config_form()
@@ -207,6 +207,7 @@ def test_init_config_form_empty_columns_falls_back_to_defaults(
 ) -> None:
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: "enabled")
     monkeypatch.setattr(prompt_ui, "_prompt_multi_choice", lambda *args, **kwargs: [])
+    monkeypatch.setattr(prompt_ui, "_prompt_yes_no", lambda *args, **kwargs: False)
 
     payload = prompt_ui.init_config_form()
     assert payload is not None
@@ -236,6 +237,7 @@ def test_init_config_form_ignores_invalid_default_columns(monkeypatch: pytest.Mo
 
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: "enabled")
     monkeypatch.setattr(prompt_ui, "_prompt_multi_choice", _multi_choice)
+    monkeypatch.setattr(prompt_ui, "_prompt_yes_no", lambda *args, **kwargs: False)
 
     payload = prompt_ui.init_config_form(default_list_column_names=["not-a-column", "task_name", "task_name"])
     assert payload is not None
@@ -247,6 +249,7 @@ def test_init_config_form_empty_selection_uses_fallback_defaults_even_with_inval
 ) -> None:
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: "enabled")
     monkeypatch.setattr(prompt_ui, "_prompt_multi_choice", lambda *args, **kwargs: [])
+    monkeypatch.setattr(prompt_ui, "_prompt_yes_no", lambda *args, **kwargs: False)
 
     payload = prompt_ui.init_config_form(default_list_column_names=["not-a-column"])
     assert payload is not None
@@ -263,6 +266,29 @@ def test_init_config_form_empty_selection_uses_fallback_defaults_even_with_inval
 def test_init_config_form_cancel_on_banner_choice_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
     choices = iter(["enabled", None])
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    assert prompt_ui.init_config_form() is None
+
+
+def test_init_config_form_include_agents_prompt_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    choices = iter(["enabled", "enabled"])
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(prompt_ui, "_prompt_multi_choice", lambda *args, **kwargs: ["task_name"])
+    monkeypatch.setattr(prompt_ui, "_prompt_yes_no", lambda *args, **kwargs: True)
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: "TEAM_AGENTS.md")
+
+    payload = prompt_ui.init_config_form()
+    assert payload is not None
+    assert payload["append_agents_snippet"] is True
+    assert payload["agents_file"] == "TEAM_AGENTS.md"
+
+
+def test_init_config_form_cancel_on_agents_file_prompt_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    choices = iter(["enabled", "enabled"])
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(prompt_ui, "_prompt_multi_choice", lambda *args, **kwargs: ["task_name"])
+    monkeypatch.setattr(prompt_ui, "_prompt_yes_no", lambda *args, **kwargs: True)
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: None)
+
     assert prompt_ui.init_config_form() is None
 
 

@@ -17,8 +17,8 @@ cd examples/basic-demo
 ```
 
 The first `dot-tasks init` in a new workspace writes `.tasks/config.yaml` with `settings.interactive_enabled`, `settings.show_banner`, and `settings.list_table.columns`.
-In interactive terminals, `init` uses selector prompts (including checkbox multi-select) to configure these managed values.
-Re-running interactive `dot-tasks init` updates those managed config values; `--nointeractive` keeps existing values unchanged.
+In interactive terminals, `init` uses selector prompts (including checkbox multi-select) to configure these managed values, can optionally append the canonical `dot-tasks` task-management section to an AGENTS policy file, and can optionally run `npx skills add Awni00/dot-tasks --skill dot-tasks`.
+Re-running interactive `dot-tasks init` updates managed config values; `--nointeractive` skips optional interactive integrations (and only appends AGENTS guidance when `--append-agents-snippet` is explicitly provided).
 
 Interactive pickers support keyboard navigation in prompt mode:
 
