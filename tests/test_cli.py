@@ -406,6 +406,134 @@ def test_nointeractive_init_never_attempts_skill_install(monkeypatch: pytest.Mon
     assert result.exit_code == 0
 
 
+def test_install_skill_success_prints_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "dot_tasks.cli._install_dot_tasks_skill_via_npx",
+        lambda: (True, "Installed dot-tasks skill from Awni00/dot-tasks."),
+    )
+    result = runner.invoke(app, ["install-skill", "--yes"])
+    assert result.exit_code == 0
+    assert "Installed dot-tasks skill from Awni00/dot-tasks." in result.output
+
+
+def test_install_skill_failure_exits_nonzero(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("dot_tasks.cli._install_dot_tasks_skill_via_npx", lambda: (False, "mock install failure"))
+    result = runner.invoke(app, ["install-skill", "--yes"])
+    assert result.exit_code == 1
+    assert "Error: mock install failure" in result.output
+
+
+def test_install_skill_yes_bypasses_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr(
+        "dot_tasks.cli._confirm_action",
+        lambda prompt, default: pytest.fail("confirm should not run with --yes"),
+    )
+    monkeypatch.setattr("dot_tasks.cli._install_dot_tasks_skill_via_npx", lambda: (True, "ok"))
+    result = runner.invoke(app, ["install-skill", "--yes"])
+    assert result.exit_code == 0
+    assert "ok" in result.output
+
+
+def test_install_skill_nointeractive_bypasses_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr(
+        "dot_tasks.cli._confirm_action",
+        lambda prompt, default: pytest.fail("confirm should not run with --nointeractive"),
+    )
+    monkeypatch.setattr("dot_tasks.cli._install_dot_tasks_skill_via_npx", lambda: (True, "ok"))
+    result = runner.invoke(app, ["install-skill", "--nointeractive"])
+    assert result.exit_code == 0
+    assert "ok" in result.output
+
+
+def test_install_skill_prompt_decline_cancels(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr("dot_tasks.cli._confirm_action", lambda prompt, default: False)
+    monkeypatch.setattr(
+        "dot_tasks.cli._install_dot_tasks_skill_via_npx",
+        lambda: pytest.fail("install helper should not run when prompt is declined"),
+    )
+    result = runner.invoke(app, ["install-skill"])
+    assert result.exit_code == 0
+    assert "Canceled." in result.output
+
+
+def test_add_agents_snippet_default_path_creates_agents_md(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root), "--nointeractive"])
+    result = runner.invoke(app, ["add-agents-snippet", "--tasks-root", str(root), "--yes"])
+    assert result.exit_code == 0
+    agents_file = tmp_path / "AGENTS.md"
+    assert agents_file.exists()
+    content = agents_file.read_text(encoding="utf-8")
+    assert "<!-- dot-tasks:begin task-management -->" in content
+    assert "Created AGENTS snippet:" in result.output
+
+
+def test_add_agents_snippet_custom_file_writes_target(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root), "--nointeractive"])
+    result = runner.invoke(
+        app,
+        [
+            "add-agents-snippet",
+            "--tasks-root",
+            str(root),
+            "--agents-file",
+            "policy/TEAM_AGENTS.md",
+            "--yes",
+        ],
+    )
+    assert result.exit_code == 0
+    agents_file = tmp_path / "policy" / "TEAM_AGENTS.md"
+    assert agents_file.exists()
+    assert "<!-- dot-tasks:begin task-management -->" in agents_file.read_text(encoding="utf-8")
+
+
+def test_add_agents_snippet_second_run_reports_unchanged(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root), "--nointeractive"])
+    r1 = runner.invoke(app, ["add-agents-snippet", "--tasks-root", str(root), "--yes"])
+    r2 = runner.invoke(app, ["add-agents-snippet", "--tasks-root", str(root), "--yes"])
+    assert r1.exit_code == 0
+    assert r2.exit_code == 0
+    assert "Unchanged AGENTS snippet:" in r2.output
+
+
+def test_add_agents_snippet_yes_bypasses_prompt(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root), "--nointeractive"])
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr(
+        "dot_tasks.cli._confirm_action",
+        lambda prompt, default: pytest.fail("confirm should not run with --yes"),
+    )
+    result = runner.invoke(app, ["add-agents-snippet", "--tasks-root", str(root), "--yes"])
+    assert result.exit_code == 0
+
+
+def test_add_agents_snippet_prompt_decline_cancels(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root), "--nointeractive"])
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr("dot_tasks.cli._confirm_action", lambda prompt, default: False)
+    monkeypatch.setattr(
+        "dot_tasks.cli._append_agents_snippet",
+        lambda project_root, agents_file: pytest.fail("append helper should not run when prompt is declined"),
+    )
+    result = runner.invoke(app, ["add-agents-snippet", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert "Canceled." in result.output
+
+
+def test_add_agents_snippet_without_tasks_root_fails() -> None:
+    with runner.isolated_filesystem():
+        result = runner.invoke(app, ["add-agents-snippet", "--nointeractive"])
+        assert result.exit_code == 1
+        assert "Run 'dot-tasks init' first." in result.output
+
+
 def test_create_rejects_duplicate_name(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])

@@ -36,6 +36,10 @@ AppendAgentsSnippetOption = Annotated[
         help="Append dot-tasks task-management section to AGENTS.md file",
     ),
 ]
+YesOption = Annotated[
+    bool,
+    typer.Option("--yes", help="Skip confirmation prompt"),
+]
 
 
 def _can_interact() -> bool:
@@ -359,12 +363,20 @@ def _append_agents_snippet(
     return status, target
 
 
-def _prompt_install_skill() -> bool:
+def _confirm_action(prompt: str, *, default: bool) -> bool:
     try:
-        return bool(typer.confirm("Install dot-tasks skill via npx skills now?", default=False))
+        return bool(typer.confirm(prompt, default=default))
     except (click.Abort, EOFError, KeyboardInterrupt):
-        # If prompt input is unavailable/canceled, default to skipping install.
         return False
+
+
+def _should_prompt_for_confirmation(*, nointeractive: bool, yes: bool) -> bool:
+    return _can_interact() and not nointeractive and not yes
+
+
+def _prompt_install_skill() -> bool:
+    # Preserve historical init behavior: default to "no" for the optional init prompt.
+    return _confirm_action("Install dot-tasks skill via npx skills now?", default=False)
 
 
 def _install_dot_tasks_skill_via_npx() -> tuple[bool, str]:
@@ -558,6 +570,59 @@ def init_cmd(
                 typer.echo(message)
             else:
                 typer.echo(f"Warning: {message}", err=True)
+
+    _run_and_handle(_inner)
+
+
+@app.command("install-skill")
+def install_skill_cmd(
+    nointeractive: NoInteractiveOption = False,
+    yes: YesOption = False,
+) -> None:
+    """Install the dot-tasks skill via npx skills."""
+
+    def _inner() -> None:
+        if _should_prompt_for_confirmation(nointeractive=nointeractive, yes=yes):
+            if not _confirm_action("Install dot-tasks skill via npx skills now?", default=True):
+                _exit_canceled(0)
+
+        installed, message = _install_dot_tasks_skill_via_npx()
+        if not installed:
+            raise TaskValidationError(message)
+        typer.echo(message)
+
+    _run_and_handle(_inner)
+
+
+@app.command("add-agents-snippet")
+def add_agents_snippet_cmd(
+    nointeractive: NoInteractiveOption = False,
+    tasks_root: TasksRootOption = None,
+    agents_file: AgentsFileOption = None,
+    yes: YesOption = False,
+) -> None:
+    """Add or update the canonical dot-tasks section in AGENTS.md."""
+
+    def _inner() -> None:
+        resolved_tasks_root = _resolve_existing_root(tasks_root)
+        project_root = resolved_tasks_root.parent
+        target = agents_snippet.resolve_agents_file(project_root, agents_file)
+
+        if _should_prompt_for_confirmation(nointeractive=nointeractive, yes=yes):
+            if not _confirm_action(
+                f"Add or update dot-tasks AGENTS snippet in {target}?",
+                default=True,
+            ):
+                _exit_canceled(0)
+
+        status, target = _append_agents_snippet(project_root, agents_file=agents_file)
+        action = {
+            "created": "Created",
+            "updated": "Updated",
+            "appended": "Appended",
+            "unchanged": "Unchanged",
+        }[status]
+        typer.echo(f"{action} AGENTS snippet: {target}")
 
     _run_and_handle(_inner)
 

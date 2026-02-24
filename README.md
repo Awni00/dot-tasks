@@ -114,6 +114,8 @@ uv pip install -e ".[dev]"
 | Command | Purpose | Typical usage |
 | --- | --- | --- |
 | `init` | Create `.tasks/` and write/update managed config settings; can also append workflow guidance section AGENTS.md and install the skill via `npx skills`. | `dot-tasks init` |
+| `install-skill` | Install the canonical `dot-tasks` skill via `npx skills`. | `dot-tasks install-skill [--yes]` |
+| `add-agents-snippet` | Add or update the canonical `dot-tasks` section in AGENTS policy markdown. | `dot-tasks add-agents-snippet [--agents-file <path>] [--yes]` |
 | `create` | Add a new task to `todo/`. | `dot-tasks create <task_name>` |
 | `start` | Move a task to `doing/` and create `plan.md`. | `dot-tasks start <task_name>` |
 | `complete` | Move a task to `done/`. | `dot-tasks complete <task_name>` |
@@ -145,12 +147,17 @@ Typical agent workflow:
 4. Log meaningful progress with `dot-tasks update --note ...` as work evolves.
 5. Close the loop with `dot-tasks complete` when acceptance criteria are met.
 
-`dot-tasks init` can also set up integration pieces:
+You can set up agent integration pieces either during `dot-tasks init` or with standalone commands:
 
-- It can append a canonical **“Task management with `dot-tasks`”** section to your project `AGENTS.md`.
-- It can run:
-  `npx skills add Awni00/dot-tasks --skill dot-tasks`
-  to install the `dot-tasks` skill.
+- During `dot-tasks init` (interactive flow), `dot-tasks` can optionally append the AGENTS section and install the skill.
+- Standalone commands:
+
+```bash
+dot-tasks install-skill
+dot-tasks install-skill --yes
+dot-tasks add-agents-snippet
+dot-tasks add-agents-snippet --agents-file TEAM_AGENTS.md --yes
+```
 
 ## Example Project
 
