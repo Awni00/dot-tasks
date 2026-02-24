@@ -6,22 +6,63 @@
   </picture>
 </p>
 
-`dot-tasks` is a small CLI for managing project-level tasks in a local `.tasks/` directory, using human- and agent-readable files.
-
-It started as a personal workflow tool: keep task specs in files, let agents work from those specs, and keep progress updates in the repo instead of chat history. It is shared here in case the same approach is useful to others.
-
-![dot-tasks CLI demo](assets/demo/cli-demo.gif)
-
 <p align="center">
   <a href="https://github.com/Awni00/dot-tasks/actions/workflows/tests.yml"><img src="https://github.com/Awni00/dot-tasks/actions/workflows/tests.yml/badge.svg" alt="Unit Tests"></a>
   <a href="https://github.com/Awni00/dot-tasks/actions/workflows/publish.yml"><img src="https://github.com/Awni00/dot-tasks/actions/workflows/publish.yml/badge.svg" alt="Publish"></a>
   <a href="https://pypi.org/project/dot-tasks/"><img src="https://img.shields.io/pypi/v/dot-tasks" alt="PyPI version"></a>
-  <img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License">
+  <a href="https://github.com/Awni00/dot-tasks/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License"></a>
 </p>
 
-## High-level Workflow
+<p align="center">
+  <a href="#quick-start">Quick Start</a> •
+  <a href="#installation">Install</a> •
+  <!-- <a href="#commands">Commands</a> • -->
+  <a href="#ai-agent-integration">AI Agent Integration</a> •
+  <a href="#example-project">Example Project</a> •
+  <a href="https://deepwiki.com/Awni00/dot-tasks">DeepWiki</a>
+</p>
 
-This is the workflow I usually follow.
+`dot-tasks` is a simple CLI for managing project-level tasks in a local `.tasks/` directory, using human- and agent-readable files.
+
+It started as a personal workflow tool: keep task specs in files, let agents work from those specs, and keep progress updates in the repo instead of chat history. It is shared here in case the same approach is useful to others.
+
+![dot-tasks CLI demo](https://raw.githubusercontent.com/Awni00/dot-tasks/main/assets/demo/cli-demo.gif)
+
+
+## Quick Start
+
+Quick start commands:
+
+```bash
+# Initialize .tasks/ dir in the current project
+dot-tasks init
+# Create a new todo task with an initial summary.
+dot-tasks create rename-variables-for-vibes --summary "Refactor variable names for maximum vibes"
+# Move the task from todo/ to doing/ and create its plan.md.
+dot-tasks start rename-variables-for-vibes
+# Append a progress note while work is in progress.
+dot-tasks update rename-variables-for-vibes --note "Replaced cryptic names with vibes-based naming"
+# Mark the task complete and move it to done/.
+dot-tasks complete rename-variables-for-vibes
+```
+
+### Task directory layout
+
+```text
+.tasks/
+  todo/
+  doing/
+  done/
+  trash/
+```
+
+Each task lives in `.tasks/<status-bucket>/<created-date>-<task_name>/` and contains:
+
+- `task.md` (canonical metadata frontmatter + task body)
+- `activity.md` (append-only audit log)
+- `plan.md` (created when the task is started)
+
+### Typical workflow:
 
 | Step | What happens | Command(s) | Files touched |
 | --- | --- | --- | --- |
@@ -30,16 +71,6 @@ This is the workflow I usually follow.
 | Start active work | Move the task to active status when implementation begins. | `dot-tasks start` | Move task from `.tasks/todo/` to `.tasks/doing/`; `plan.md` created |
 | Work loop | Log notable progress updates so humans and agents share context. | `dot-tasks update` | `task.md`, `activity.md` |
 | Finish and archive state | Mark done when acceptance criteria are met, preserving full history in files. | `dot-tasks complete` | task directory moves to `.tasks/done/`|
-
-## Contents
-
-- [High-level Workflow](#high-level-workflow)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Task Layout](#task-layout)
-- [Commands](#commands)
-- [AI Agent Integration](#ai-agent-integration)
-- [Example Project](#example-project)
 
 ## Installation
 
@@ -77,32 +108,6 @@ Editable install:
 ```bash
 uv pip install -e ".[dev]"
 ```
-
-## Quick Start
-
-```bash
-dot-tasks init
-dot-tasks create add-task-manager --summary "Build initial package"
-dot-tasks start add-task-manager
-dot-tasks update add-task-manager --note "Implemented storage layer"
-dot-tasks complete add-task-manager
-```
-
-## Task Layout
-
-```text
-.tasks/
-  todo/
-  doing/
-  done/
-  trash/
-```
-
-Each task lives in `.tasks/<status-bucket>/<created-date>-<task_name>/` and contains:
-
-- `task.md` (canonical metadata frontmatter + task body)
-- `activity.md` (append-only audit log)
-- `plan.md` (created when the task is started)
 
 ## Commands
 
