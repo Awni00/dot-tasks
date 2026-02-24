@@ -5,61 +5,53 @@ description: Reference skill for users integrating dot-tasks into AI coding agen
 
 # dot-tasks Skill
 
+`dot-tasks` is a Python CLI (assumed installed) that tracks human/agent work in a repo-local `.tasks/` directory.
+
 Use this skill whenever a repository uses `dot-tasks` for task lifecycle tracking.
 
 ## When To Use
 
-- For substantial or multi-file work, suggest tracking execution with `dot-tasks`. A good heuristic is whether the user enters "plan mode" during planning, which should trigger a question about creating a `dot-tasks` task. Check whether a `dot-tasks` task already exists for the work before proposing creation.
+- For substantial or multi-file work, use `dot-tasks` as the tracking source of truth.
 - If the user asks what to work on next, use `dot-tasks` task state as the source of truth.
 
-## Default Collaboration Loop
+## Default Agent Loop
 
-1. Capture task intent with `dot-tasks create <task_name> --summary "..."`.
-2. When asked what to work on, inspect `todo`/`doing` via `dot-tasks list` and suggest up to 3 candidate tasks with one-line rationale each.
-3. Start active work with `dot-tasks start <task_name>`.
-4. Keep progress current with `dot-tasks update <task_name> --note "..."`.
-5. Complete with `dot-tasks complete <task_name>` when acceptance criteria are met.
+1. Ensure `.tasks/` exists; if missing, run `dot-tasks init` (or ask permission before initializing).
+2. Detect existing tasks first:
+   - Fast path: if user gives a known `task_name`/`task_id`, run `dot-tasks view <task_name_or_id> --json`.
+   - Otherwise run `dot-tasks list --json`, shortlist likely matches, and inspect candidates with `dot-tasks view <task_name_or_id> --json`.
+3. Confirm with the user whether a candidate task matches and whether tracking should bind to it.
+4. If no task matches and work is substantial (plan mode, likely multi-file, or >=30 minutes), ask whether to create a new task.
+5. If work is quick/simple, do not force task creation unless the user asks.
+6. Once tracking is bound, run: `start` -> `update --note` -> `complete`.
 
 ## Commands
 
 ```bash
-# view help for given command
-dot-tasks <command> --help
+# setup
+dot-tasks init                                              # initialize .tasks/
 
-# list all tasks (optionally, return as json for agent parsing)
-dot-tasks list [--json]
+# discover
+dot-tasks list --json                                       # list tasks for matching
+dot-tasks list [todo|doing|done] --json                    # narrow by status
+dot-tasks view <task_name_or_id> --json                    # inspect one task
+dot-tasks tags [todo|doing|done] --json                    # tag counts/triage
 
-# list tasks by status
-dot-tasks list [todo|doing|done]
+# lifecycle
+dot-tasks create <task_name> --summary "..." --priority [p1|p2|p3|p4] --effort [s|m|l|xl] --tag <tag>
+dot-tasks start <task_name_or_id>                          # move to doing + create plan.md
+dot-tasks update <task_name_or_id> --note "Progress note"  # add a progress note
+dot-tasks complete <task_name_or_id>                       # move to done
 
-# view details for task by name
-dot-tasks view <task_name>
-
-# create a new task with summary
-dot-tasks create <task_name> --summary "One-line summary of the task" --priority [p0|p1|p2|p3] --effort [s|m|l] --tag <tag>
-
-# start a task (moves from todo/ to doing/ and creates plan.md)
-dot-tasks start <task_name>
-
-# update task metadata, dependencies, or add progress note
-dot-tasks update <task_name> --priority p1 --effort l --depends-on <task>
-
-# add a progress note to the task's activity history
-dot-tasks update <task_name> --note "Progress update"
-
-# rename a task
-dot-tasks rename <old_name> <new_name>
-
-# delete a task (soft-delete by default, use --hard to permanently delete)
-dot-tasks delete <task_name>
-
-# complete a task (moves to done/)
-dot-tasks complete <task_name>
+# maintenance
+dot-tasks rename <task_name_or_id> <new_task_name>         # rename task
+dot-tasks delete <task_name_or_id>                         # soft-delete to trash
 ```
 
 ## Working Rules
 
 - Prefer `dot-tasks` commands over direct edits to task state files.
+- Avoid silent auto-binding on fuzzy matches; confirm task binding with the user.
 - Direct file edits are allowed for:
   1. `task.md` for writing task summary/specs after `dot-tasks create`.
   2. `plan.md` to keep implementation steps current after `dot-tasks start`.

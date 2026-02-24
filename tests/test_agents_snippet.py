@@ -11,6 +11,14 @@ def test_load_task_management_snippet_has_markers() -> None:
     assert agents_snippet.END_MARKER in snippet
 
 
+def test_load_task_management_snippet_has_detection_confirmation_and_create_trigger_rules() -> None:
+    snippet = agents_snippet.load_task_management_snippet()
+    assert "dot-tasks list --json" in snippet
+    assert "dot-tasks view <task_name_or_id> --json" in snippet
+    assert "Confirm the tracking target with the user" in snippet
+    assert "work is substantial (plan mode, likely multi-file, or >=30 minutes)" in snippet
+
+
 def test_resolve_agents_file_defaults_to_project_agents_md(tmp_path: Path) -> None:
     resolved = agents_snippet.resolve_agents_file(tmp_path, None)
     assert resolved == (tmp_path / "AGENTS.md").resolve()
