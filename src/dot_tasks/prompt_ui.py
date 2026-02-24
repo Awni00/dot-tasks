@@ -7,7 +7,14 @@ from typing import Any
 import typer
 
 from .models import Task, VALID_EFFORTS, VALID_PRIORITIES
-from .selector_ui import SelectorUnavailableError, select_fuzzy, select_fuzzy_many, select_many, select_one
+from .selector_ui import (
+    SelectorUnavailableError,
+    select_fuzzy,
+    select_fuzzy_many,
+    select_many,
+    select_one,
+    select_text,
+)
 from . import storage
 
 
@@ -19,6 +26,13 @@ def _warn_selector_fallback(exc: Exception) -> None:
 
 
 def _safe_prompt(message: str, *, default: str = "") -> str | None:
+    try:
+        selected = select_text(message, default_value=default)
+    except SelectorUnavailableError:
+        pass
+    else:
+        return selected
+
     try:
         return typer.prompt(message, default=default)
     except (typer.Abort, KeyboardInterrupt, EOFError):

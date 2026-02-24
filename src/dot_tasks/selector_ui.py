@@ -65,6 +65,35 @@ def select_one(
     return str(result)
 
 
+def select_text(
+    message: str,
+    *,
+    default_value: str = "",
+) -> str | None:
+    """Return typed text, None on cancel, or raise SelectorUnavailableError for fallback."""
+    _ensure_tty()
+
+    inquirer = _inquirer()
+    try:
+        result = inquirer.text(
+            message=message,
+            default=default_value,
+            vi_mode=False,
+            mandatory=False,
+            raise_keyboard_interrupt=True,
+        ).execute()
+    except KeyboardInterrupt:
+        return None
+    except EOFError:
+        return None
+    except Exception as exc:
+        raise SelectorUnavailableError("selector runtime failed") from exc
+
+    if result is None:
+        return None
+    return str(result)
+
+
 def select_fuzzy(
     title: str,
     options: list[tuple[str, str]],

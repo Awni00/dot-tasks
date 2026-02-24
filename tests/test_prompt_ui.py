@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import typer
 
 from dot_tasks.models import Task, TaskMetadata
 from dot_tasks import prompt_ui
@@ -29,13 +30,18 @@ class _FakeInquirer:
         checkbox_result=None,
         fuzzy_result=None,
         fuzzy_error: Exception | None = None,
+        text_result=None,
+        text_error: Exception | None = None,
     ):
         self.select_result = select_result
         self.select_error = select_error
         self.checkbox_result = checkbox_result
         self.fuzzy_result = fuzzy_result
         self.fuzzy_error = fuzzy_error
+        self.text_result = text_result
+        self.text_error = text_error
         self.last_fuzzy_kwargs = None
+        self.last_text_kwargs = None
 
     def select(self, **kwargs):
         return _FakePrompt(result=self.select_result, error=self.select_error)
@@ -46,6 +52,10 @@ class _FakeInquirer:
     def fuzzy(self, **kwargs):
         self.last_fuzzy_kwargs = kwargs
         return _FakePrompt(result=self.fuzzy_result, error=self.fuzzy_error)
+
+    def text(self, **kwargs):
+        self.last_text_kwargs = kwargs
+        return _FakePrompt(result=self.text_result, error=self.text_error)
 
 
 def _task(name: str, task_id: str = "t-20260201-001") -> Task:
@@ -478,6 +488,82 @@ def test_select_one_runtime_error_raises_unavailable(monkeypatch: pytest.MonkeyP
 
     with pytest.raises(selector_ui.SelectorUnavailableError):
         selector_ui.select_one("pick", [("a", "A")])
+
+
+def test_select_text_uses_inquirer_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(selector_ui, "_ensure_tty", lambda: None)
+    fake = _FakeInquirer(text_result="typed value")
+    monkeypatch.setattr(selector_ui, "_inquirer", lambda: fake)
+
+    value = selector_ui.select_text("task_name", default_value="default-value")
+
+    assert value == "typed value"
+    assert fake.last_text_kwargs is not None
+    assert fake.last_text_kwargs["message"] == "task_name"
+    assert fake.last_text_kwargs["default"] == "default-value"
+    assert fake.last_text_kwargs["vi_mode"] is False
+    assert fake.last_text_kwargs["mandatory"] is False
+    assert fake.last_text_kwargs["raise_keyboard_interrupt"] is True
+
+
+def test_select_text_keyboard_interrupt_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(selector_ui, "_ensure_tty", lambda: None)
+    monkeypatch.setattr(
+        selector_ui,
+        "_inquirer",
+        lambda: _FakeInquirer(text_error=KeyboardInterrupt()),
+    )
+
+    assert selector_ui.select_text("task_name", default_value="x") is None
+
+
+def test_select_text_runtime_error_raises_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(selector_ui, "_ensure_tty", lambda: None)
+    monkeypatch.setattr(
+        selector_ui,
+        "_inquirer",
+        lambda: _FakeInquirer(text_error=RuntimeError("boom")),
+    )
+
+    with pytest.raises(selector_ui.SelectorUnavailableError):
+        selector_ui.select_text("task_name", default_value="x")
+
+
+def test_safe_prompt_uses_selector_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(prompt_ui, "select_text", lambda message, default_value="": "value-from-selector")
+    monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: pytest.fail("fallback prompt used"))
+
+    assert prompt_ui._safe_prompt("summary", default="default") == "value-from-selector"
+
+
+def test_safe_prompt_falls_back_to_typer_on_selector_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        prompt_ui,
+        "select_text",
+        lambda message, default_value="": (_ for _ in ()).throw(
+            selector_ui.SelectorUnavailableError("fallback")
+        ),
+    )
+    monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: "value-from-typer")
+
+    assert prompt_ui._safe_prompt("summary", default="default") == "value-from-typer"
+
+
+def test_safe_prompt_returns_none_when_typer_aborts(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        prompt_ui,
+        "select_text",
+        lambda message, default_value="": (_ for _ in ()).throw(
+            selector_ui.SelectorUnavailableError("fallback")
+        ),
+    )
+    monkeypatch.setattr(
+        prompt_ui.typer,
+        "prompt",
+        lambda *args, **kwargs: (_ for _ in ()).throw(typer.Abort()),
+    )
+
+    assert prompt_ui._safe_prompt("summary", default="default") is None
 
 
 def test_numeric_single_choice_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
