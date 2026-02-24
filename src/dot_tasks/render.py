@@ -200,6 +200,78 @@ def render_task_list_json(tasks: Iterable[Task], unmet_counts: dict[str, int]) -
     return json.dumps(payload, indent=2)
 
 
+def render_tag_counts_plain(
+    rows: Iterable[dict[str, str | int]],
+    *,
+    show_status_breakdown: bool = True,
+) -> str:
+    headers = ["tag", "total", "todo", "doing", "done"] if show_status_breakdown else ["tag", "total"]
+    row_data = [{name: str(row[name]) for name in headers} for row in rows]
+    if not row_data:
+        return "No tags found."
+
+    widths = {
+        name: max(len(name), *(len(item[name]) for item in row_data))
+        for name in headers
+    }
+    lines = []
+    lines.append("  ".join(name.ljust(widths[name]) for name in headers))
+    lines.append("  ".join("-" * widths[name] for name in headers))
+    for row in row_data:
+        lines.append("  ".join(row[name].ljust(widths[name]) for name in headers))
+    return "\n".join(lines)
+
+
+def render_tag_counts_rich(
+    rows: Iterable[dict[str, str | int]],
+    *,
+    show_status_breakdown: bool = True,
+):
+    from rich import box
+    from rich.table import Table
+    from rich.text import Text
+
+    row_data = list(rows)
+    if not row_data:
+        return "No tags found."
+
+    table = Table(
+        box=box.SIMPLE_HEAVY,
+        show_header=True,
+        header_style="bold white",
+        pad_edge=False,
+    )
+    table.add_column("tag", style="bold")
+    table.add_column("total", justify="right")
+    if show_status_breakdown:
+        table.add_column("todo", justify="right")
+        table.add_column("doing", justify="right")
+        table.add_column("done", justify="right")
+
+    for row in row_data:
+        tag = str(row["tag"])
+        tag_cell = Text(tag, style="dim" if tag == "(untagged)" else "bold")
+        values: list[str | Text] = [
+            tag_cell,
+            str(row["total"]),
+        ]
+        if show_status_breakdown:
+            values.extend(
+                [
+                    str(row["todo"]),
+                    str(row["doing"]),
+                    str(row["done"]),
+                ]
+            )
+        table.add_row(*values)
+    return table
+
+
+def render_tag_counts_json(rows: Iterable[dict[str, str | int]]) -> str:
+    payload = [dict(row) for row in rows]
+    return json.dumps(payload, indent=2)
+
+
 def _inline_dependency_rows(rows: list[tuple[str, str, str]]) -> str:
     if not rows:
         return "-"

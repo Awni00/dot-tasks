@@ -117,11 +117,21 @@ uv pip install -e ".[dev]"
 | `create` | Add a new task to `todo/`. | `dot-tasks create <task_name>` |
 | `start` | Move a task to `doing/` and create `plan.md`. | `dot-tasks start <task_name>` |
 | `complete` | Move a task to `done/`. | `dot-tasks complete <task_name>` |
-| `list` | List tasks by status (rich/plain/JSON depending on context). | `dot-tasks list [todo|doing|done] [--json]` |
+| `list` | List tasks by status and optional tag filters (rich/plain/JSON depending on context). | `dot-tasks list [todo|doing|done] [--tag <tag> ...] [--json]` |
+| `tags` | Show task counts by tag with optional status filter (rich/plain/JSON depending on context). | `dot-tasks tags [todo|doing|done] [--sort count|name] [--json]` |
 | `view` | Show full details for one task. | `dot-tasks view <task_name> [--json]` |
 | `update` | Update metadata, dependencies, tags, or add notes. | `dot-tasks update <task_name> ...` |
 | `rename` | Rename a task. | `dot-tasks rename <task_name> <new_task_name>` |
 | `delete` | Move a task to `trash/`, or delete permanently with `--hard`. | `dot-tasks delete <task_name> [--hard]` |
+
+Tag examples:
+
+```bash
+dot-tasks list --tag bug
+dot-tasks list doing --tag backend --tag api --all-tags
+dot-tasks tags
+dot-tasks tags todo --sort name
+```
 
 ## AI Agent Integration
 

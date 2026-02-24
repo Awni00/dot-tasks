@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -182,3 +183,63 @@ def test_render_task_detail_rich_header_first_layout() -> None:
     assert "depends_on: add-json-export (t-20260205-001) [todo]" in text
     assert "blocked_by: downstream-task (t-20260207-001) [doing]" in text
     assert "## Summary" in text
+
+
+def test_render_tag_counts_plain_with_status_breakdown() -> None:
+    rows = [
+        {"tag": "backend", "total": 3, "todo": 1, "doing": 1, "done": 1},
+        {"tag": "(untagged)", "total": 1, "todo": 1, "doing": 0, "done": 0},
+    ]
+
+    output = render.render_tag_counts_plain(rows, show_status_breakdown=True)
+    lines = output.splitlines()
+    assert lines[0].split() == ["tag", "total", "todo", "doing", "done"]
+    assert "backend" in output
+    assert "(untagged)" in output
+
+
+def test_render_tag_counts_plain_without_status_breakdown() -> None:
+    rows = [
+        {"tag": "backend", "total": 2, "todo": 1, "doing": 1, "done": 0},
+    ]
+
+    output = render.render_tag_counts_plain(rows, show_status_breakdown=False)
+    lines = output.splitlines()
+    assert lines[0].split() == ["tag", "total"]
+    assert "doing" not in lines[0]
+    assert "done" not in lines[0]
+
+
+def test_render_tag_counts_plain_empty() -> None:
+    output = render.render_tag_counts_plain([], show_status_breakdown=True)
+    assert output == "No tags found."
+
+
+def test_render_tag_counts_rich() -> None:
+    pytest.importorskip("rich")
+    from rich.console import Console
+
+    rows = [
+        {"tag": "backend", "total": 2, "todo": 1, "doing": 1, "done": 0},
+        {"tag": "(untagged)", "total": 1, "todo": 1, "doing": 0, "done": 0},
+    ]
+
+    renderable = render.render_tag_counts_rich(rows, show_status_breakdown=True)
+    console = Console(record=True, width=120, force_terminal=False, color_system=None)
+    console.print(renderable)
+    text = console.export_text()
+
+    assert "tag" in text
+    assert "total" in text
+    assert "backend" in text
+    assert "(untagged)" in text
+
+
+def test_render_tag_counts_json_shape() -> None:
+    rows = [
+        {"tag": "backend", "total": 2, "todo": 1, "doing": 1, "done": 0},
+    ]
+
+    output = render.render_tag_counts_json(rows)
+    payload = json.loads(output)
+    assert payload == rows

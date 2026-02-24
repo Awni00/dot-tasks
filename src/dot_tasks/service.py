@@ -172,11 +172,40 @@ class TaskService:
         tasks = self._all_active()
         self._validate_and_persist_snapshot(tasks)
 
-    def list_tasks(self, status: str | None = None, include_trash: bool = False) -> list[Task]:
+    def list_tasks(
+        self,
+        status: str | None = None,
+        include_trash: bool = False,
+        *,
+        include_tags: Iterable[str] | None = None,
+        exclude_tags: Iterable[str] | None = None,
+        require_all_tags: bool = False,
+        untagged_only: bool = False,
+    ) -> list[Task]:
         tasks = self._load(include_trash=include_trash)
         if status:
             desired = "completed" if status == "done" else status
             tasks = [task for task in tasks if task.metadata.status == desired]
+
+        include_tag_set = set(_normalize_tags(include_tags))
+        exclude_tag_set = set(_normalize_tags(exclude_tags))
+        if include_tag_set or exclude_tag_set or untagged_only:
+            filtered: list[Task] = []
+            for task in tasks:
+                task_tags = set(task.metadata.tags)
+                if untagged_only and task_tags:
+                    continue
+                if include_tag_set:
+                    if require_all_tags:
+                        if not include_tag_set.issubset(task_tags):
+                            continue
+                    elif not task_tags.intersection(include_tag_set):
+                        continue
+                if exclude_tag_set and task_tags.intersection(exclude_tag_set):
+                    continue
+                filtered.append(task)
+            tasks = filtered
+
         return sorted(
             tasks,
             key=lambda task: (
@@ -186,6 +215,40 @@ class TaskService:
                 task.metadata.task_name,
             ),
         )
+
+    def tag_counts(
+        self,
+        status: str | None = None,
+        *,
+        include_untagged: bool = True,
+    ) -> list[dict[str, str | int]]:
+        counts: dict[str, dict[str, int]] = {}
+        for task in self.list_tasks(status=status):
+            status_key = "done" if task.metadata.status == "completed" else task.metadata.status
+            tags = sorted(set(task.metadata.tags))
+            if not tags:
+                if not include_untagged:
+                    continue
+                tags = ["(untagged)"]
+            for tag in tags:
+                if tag not in counts:
+                    counts[tag] = {"total": 0, "todo": 0, "doing": 0, "done": 0}
+                counts[tag]["total"] += 1
+                counts[tag][status_key] += 1
+
+        rows: list[dict[str, str | int]] = []
+        for tag in sorted(counts):
+            row = counts[tag]
+            rows.append(
+                {
+                    "tag": tag,
+                    "total": row["total"],
+                    "todo": row["todo"],
+                    "doing": row["doing"],
+                    "done": row["done"],
+                }
+            )
+        return rows
 
     def dependency_health(self, task: Task) -> tuple[int, list[Task]]:
         by_id = self._by_id(include_trash=False)

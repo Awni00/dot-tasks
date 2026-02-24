@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 from pathlib import Path
 
 import pytest
@@ -581,6 +582,185 @@ def test_list_grouped_sorted(tmp_path: Path) -> None:
     joined = "\n".join(table_lines)
     assert "b" in joined
     assert "a" in joined
+
+
+def test_list_filters_by_tag_json(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "backend-task", "--tag", "backend", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "frontend-task", "--tag", "frontend", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["list", "--tag", "backend", "--json", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert [item["task_name"] for item in payload] == ["backend-task"]
+
+
+def test_list_filters_by_any_tags_default_json(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(
+        app,
+        ["create", "backend-api-task", "--tag", "backend", "--tag", "api", "--tasks-root", str(root)],
+    )
+    runner.invoke(app, ["create", "frontend-task", "--tag", "frontend", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "untagged-task", "--tasks-root", str(root)])
+
+    result = runner.invoke(
+        app,
+        ["list", "--tag", "backend", "--tag", "frontend", "--json", "--tasks-root", str(root)],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert {item["task_name"] for item in payload} == {"backend-api-task", "frontend-task"}
+
+
+def test_list_filters_by_all_tags_json(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(
+        app,
+        ["create", "backend-api-task", "--tag", "backend", "--tag", "api", "--tasks-root", str(root)],
+    )
+    runner.invoke(app, ["create", "backend-task", "--tag", "backend", "--tasks-root", str(root)])
+
+    result = runner.invoke(
+        app,
+        ["list", "--tag", "backend", "--tag", "api", "--all-tags", "--json", "--tasks-root", str(root)],
+    )
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert [item["task_name"] for item in payload] == ["backend-api-task"]
+
+
+def test_list_excludes_tag_json(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "wip-task", "--tag", "wip", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "ready-task", "--tag", "ready", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["list", "--exclude-tag", "wip", "--json", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert [item["task_name"] for item in payload] == ["ready-task"]
+
+
+def test_list_untagged_only_json(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "untagged-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "tagged-task", "--tag", "backend", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["list", "--untagged", "--json", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert [item["task_name"] for item in payload] == ["untagged-task"]
+
+
+def test_list_tag_filter_with_status_json(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "backend-doing", "--tag", "backend", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "backend-todo", "--tag", "backend", "--tasks-root", str(root)])
+    runner.invoke(app, ["start", "backend-doing", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["list", "doing", "--tag", "backend", "--json", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert [item["task_name"] for item in payload] == ["backend-doing"]
+
+
+def test_tags_json_includes_counts_and_breakdown(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "backend-doing", "--tag", "backend", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "backend-todo", "--tag", "backend", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "api-todo", "--tag", "api", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "untagged-doing", "--tasks-root", str(root)])
+    runner.invoke(app, ["start", "backend-doing", "--tasks-root", str(root)])
+    runner.invoke(app, ["start", "untagged-doing", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["tags", "--json", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    by_tag = {item["tag"]: item for item in payload}
+    assert by_tag["backend"] == {"tag": "backend", "total": 2, "todo": 1, "doing": 1, "done": 0}
+    assert by_tag["api"] == {"tag": "api", "total": 1, "todo": 1, "doing": 0, "done": 0}
+    assert by_tag["(untagged)"] == {"tag": "(untagged)", "total": 1, "todo": 0, "doing": 1, "done": 0}
+
+
+def test_tags_status_filter_plain_omits_breakdown_columns(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "backend-todo", "--tag", "backend", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["tags", "todo", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    first_line = next(line for line in result.output.splitlines() if line.strip())
+    assert first_line.split() == ["tag", "total"]
+
+
+def test_tags_sort_name_and_limit_json(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "a-task", "--tag", "b", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "b-task", "--tag", "a", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "c-task", "--tag", "c", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["tags", "--sort", "name", "--limit", "2", "--json", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert [item["tag"] for item in payload] == ["a", "b"]
+
+
+def test_tags_no_include_untagged_json(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "untagged-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "tagged-task", "--tag", "backend", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["tags", "--no-include-untagged", "--json", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert {item["tag"] for item in payload} == {"backend"}
+
+
+def test_tags_non_tty_uses_plain_renderer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "plain-tags", "--tag", "backend", "--tasks-root", str(root)])
+
+    monkeypatch.setattr("dot_tasks.cli._can_render_rich_list_output", lambda: False)
+    monkeypatch.setattr(
+        "dot_tasks.cli.render.render_tag_counts_plain",
+        lambda rows, show_status_breakdown: "PLAIN-TAGS",
+    )
+    monkeypatch.setattr(
+        "dot_tasks.cli.render.render_tag_counts_rich",
+        lambda rows, show_status_breakdown: pytest.fail("rich tags renderer should not run"),
+    )
+
+    result = runner.invoke(app, ["tags", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert "PLAIN-TAGS" in result.output
+
+
+def test_tags_tty_uses_rich_renderer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "rich-tags", "--tag", "backend", "--tasks-root", str(root)])
+
+    monkeypatch.setattr("dot_tasks.cli._can_render_rich_list_output", lambda: True)
+    monkeypatch.setattr(
+        "dot_tasks.cli.render.render_tag_counts_rich",
+        lambda rows, show_status_breakdown: "RICH-TAGS",
+    )
+    captured: list[object] = []
+    monkeypatch.setattr("dot_tasks.cli._print_rich", lambda renderable: captured.append(renderable))
+
+    result = runner.invoke(app, ["tags", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert captured == ["RICH-TAGS"]
 
 
 def test_list_non_tty_uses_plain_renderer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

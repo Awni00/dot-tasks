@@ -6,7 +6,7 @@ from functools import lru_cache
 from pathlib import Path
 import subprocess
 import sys
-from typing import Annotated, Sequence
+from typing import Annotated, Literal, Sequence
 
 import click
 import typer
@@ -688,6 +688,10 @@ def list_cmd(
         typer.Argument(help="Optional status filter: todo, doing, done", show_default=False),
     ] = None,
     as_json: Annotated[bool, typer.Option("--json")] = False,
+    tag: Annotated[list[str], typer.Option("--tag", help="Can be repeated")] = [],
+    exclude_tag: Annotated[list[str], typer.Option("--exclude-tag", help="Can be repeated")] = [],
+    all_tags: Annotated[bool, typer.Option("--all-tags")] = False,
+    untagged: Annotated[bool, typer.Option("--untagged")] = False,
     nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
 ) -> None:
@@ -695,7 +699,13 @@ def list_cmd(
 
     def _inner() -> None:
         svc = _service(tasks_root)
-        tasks = svc.list_tasks(status=status)
+        tasks = svc.list_tasks(
+            status=status,
+            include_tags=tag,
+            exclude_tags=exclude_tag,
+            require_all_tags=all_tags,
+            untagged_only=untagged,
+        )
         list_columns = storage.resolve_list_table_columns(svc.tasks_root, warn=_warn_config)
 
         unmet_counts = {task.metadata.task_id: svc.dependency_health(task)[0] for task in tasks}
@@ -705,6 +715,57 @@ def list_cmd(
             _print_rich(render.render_task_list_rich(tasks, unmet_counts, list_columns))
         else:
             typer.echo(render.render_task_list_plain(tasks, unmet_counts, list_columns))
+
+    _run_and_handle(_inner)
+
+
+@app.command("tags")
+def tags_cmd(
+    status: Annotated[
+        str | None,
+        typer.Argument(help="Optional status filter: todo, doing, done", show_default=False),
+    ] = None,
+    as_json: Annotated[bool, typer.Option("--json")] = False,
+    limit: Annotated[int | None, typer.Option("--limit", min=1)] = None,
+    sort: Annotated[Literal["count", "name"], typer.Option("--sort")] = "count",
+    include_untagged: Annotated[
+        bool,
+        typer.Option("--include-untagged/--no-include-untagged"),
+    ] = True,
+    nointeractive: NoInteractiveOption = False,
+    tasks_root: TasksRootOption = None,
+) -> None:
+    """Show task counts grouped by tag."""
+
+    def _inner() -> None:
+        _ = nointeractive
+        svc = _service(tasks_root)
+        rows = svc.tag_counts(status=status, include_untagged=include_untagged)
+
+        if sort == "count":
+            rows = sorted(rows, key=lambda row: (-int(row["total"]), str(row["tag"])))
+        else:
+            rows = sorted(rows, key=lambda row: str(row["tag"]))
+        if limit is not None:
+            rows = rows[:limit]
+
+        show_status_breakdown = status is None
+        if as_json:
+            typer.echo(render.render_tag_counts_json(rows))
+        elif _can_render_rich_list_output():
+            _print_rich(
+                render.render_tag_counts_rich(
+                    rows,
+                    show_status_breakdown=show_status_breakdown,
+                )
+            )
+        else:
+            typer.echo(
+                render.render_tag_counts_plain(
+                    rows,
+                    show_status_breakdown=show_status_breakdown,
+                )
+            )
 
     _run_and_handle(_inner)
 
