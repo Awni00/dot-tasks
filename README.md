@@ -41,6 +41,7 @@ This is the workflow I usually follow.
 - [Task Layout](#task-layout)
 - [Commands](#commands)
 - [AI Agent Integration](#ai-agent-integration)
+- [Example Project](#example-project)
 
 ## Installation
 
@@ -121,11 +122,23 @@ Each task lives in `.tasks/<status-bucket>/<created-date>-<task_name>/` and cont
 
 ## AI Agent Integration
 
-Reusable reference assets for agent workflows live in `agent-tools/`.
+`dot-tasks` is designed so humans and agents can work from the same file-based task state in `.tasks/` instead of relying on chat context.
 
-- `agent-tools/README.md` explains how to install and use the skill and AGENTS section source.
-- `agent-tools/skills/dot-tasks/SKILL.md` is the canonical `dot-tasks` skill file.
+Typical agent workflow:
 
-These files are for package users integrating `dot-tasks` into their own repos.
+1. Capture or refine a task spec with `dot-tasks create`.
+2. If asked what to work on, check `dot-tasks list` (`todo`/`doing`) and propose the top few options with a short rationale.
+3. Move selected work into active state with `dot-tasks start`.
+4. Log meaningful progress with `dot-tasks update --note ...` as work evolves.
+5. Close the loop with `dot-tasks complete` when acceptance criteria are met.
 
-See the pre-populated walkthrough in [`examples/basic-demo/README.md`](examples/basic-demo/README.md).
+`dot-tasks init` can also set up integration pieces:
+
+- It can append a canonical **“Task management with `dot-tasks`”** section to your project `AGENTS.md`.
+- It can run:
+  `npx skills add Awni00/dot-tasks --skill dot-tasks`
+  to install the `dot-tasks` skill.
+
+## Example Project
+
+For a full demo of the workflow, see [`examples/basic-demo/`](examples/basic-demo/) and the walkthrough in [`examples/basic-demo/README.md`](examples/basic-demo/README.md).
