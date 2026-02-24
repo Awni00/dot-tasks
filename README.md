@@ -6,8 +6,6 @@
   </picture>
 </p>
 
-# dot-tasks
-
 `dot-tasks` is a small CLI for managing project-level tasks in a local `.tasks/` directory, using human- and agent-readable files.
 
 It started as a personal workflow tool: keep task specs in files, let agents work from those specs, and keep progress updates in the repo instead of chat history. It is shared here in case the same approach is useful to others.
