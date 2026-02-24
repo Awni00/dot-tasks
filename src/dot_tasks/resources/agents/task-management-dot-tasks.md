@@ -3,7 +3,7 @@
 
 Use `dot-tasks` for substantial or multi-file work so task specs and progress stay in repo files.
 
-- Use the local skill at `skills/dot-tasks/SKILL.md` for full behavior details.
+- Use the "dot-tasks" skill for full behavior details.
 - Prefer `dot-tasks` commands over manual edits to `.tasks/` state files.
 
 Suggested workflow:
