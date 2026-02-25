@@ -866,7 +866,15 @@ def view_cmd(
             if _can_render_rich_detail_output():
                 _print_rich(render.render_task_detail_rich(task, deps, blocked_by, unmet_count))
             else:
-                typer.echo(render.render_task_detail_plain(task, deps, blocked_by, unmet_count))
+                typer.echo(
+                    render.render_task_detail_plain(
+                        task,
+                        deps,
+                        blocked_by,
+                        unmet_count,
+                        enable_links=_can_interact(),
+                    )
+                )
 
     _run_and_handle(_inner)
 

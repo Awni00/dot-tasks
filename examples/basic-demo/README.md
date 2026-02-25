@@ -68,20 +68,14 @@ dot-tasks view build-nightly-report
 Expected snippet:
 
 ```text
-task_name: build-nightly-report
-task_id: t-20260206-001
-status: todo
-priority: p0
-effort: l
-owner: alex
-tags: reporting, automation
-created: 2026-02-06
-started: -
-completed: -
-dependencies:
-- add-json-export (t-20260205-001) [todo]
-
-body:
+build-nightly-report (t-20260206-001)
+[todo] [p0] [l] [deps: blocked(1)]
+owner: alex    tags: reporting, automation
+created: 2026-02-06    started: -    completed: -
+depends_on: add-json-export (t-20260205-001) [todo]
+blocked_by: -
+dir: 2026-02-06-build-nightly-report
+files: task.md | activity.md | plan.md (missing)
 
 ## Summary
 - Build nightly report generation using exported task snapshots.

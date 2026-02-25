@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 from pathlib import Path
+import re
 
 import pytest
 from typer.testing import CliRunner
@@ -12,6 +13,7 @@ from dot_tasks.cli import app
 
 
 runner = CliRunner()
+OSC8_LINK_RE = re.compile(r"\x1b\]8;;[^\x1b]*\x1b\\(.*?)\x1b\]8;;\x1b\\")
 
 
 @pytest.fixture(autouse=True)
@@ -42,6 +44,10 @@ def _task_dir(tasks_root: Path, bucket: str, task_name: str) -> Path:
 
 def _read_config(path: Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
+
+
+def _strip_osc8(text: str) -> str:
+    return OSC8_LINK_RE.sub(r"\1", text)
 
 
 def test_init_idempotent(tmp_path: Path) -> None:
@@ -636,10 +642,43 @@ def test_view_renders_dependencies_as_name_and_id(tmp_path: Path) -> None:
 
     result = runner.invoke(app, ["view", "task-view", "--tasks-root", str(root)])
     assert result.exit_code == 0
-    assert f"task-view ({task_id})" in result.output
-    assert "[todo] [p2] [m] [deps: blocked(1)]" in result.output
-    assert f"depends_on: dep-view ({dep_id}) [todo]" in result.output
-    assert "blocked_by: -" in result.output
+    output = _strip_osc8(result.output)
+    task_dir = _task_dir(root, "todo", "task-view").resolve()
+    assert f"task-view ({task_id})" in output
+    assert "[todo] [p2] [m] [deps: blocked(1)]" in output
+    assert f"depends_on: dep-view ({dep_id}) [todo]" in output
+    assert "blocked_by: -" in output
+    assert f"dir: {task_dir.name}" in output
+    assert "files: task.md | activity.md | plan.md (missing)" in output
+    assert "extra:" not in output
+
+
+def test_view_renders_plan_as_present_for_doing_task(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "doing-view", "--tasks-root", str(root)])
+    runner.invoke(app, ["start", "doing-view", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["view", "doing-view", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    output = _strip_osc8(result.output)
+    task_dir = _task_dir(root, "doing", "doing-view").resolve()
+    assert f"dir: {task_dir.name}" in output
+    assert "files: task.md | activity.md | plan.md" in output
+    assert "extra:" not in output
+
+
+def test_view_non_tty_plain_output_has_no_osc8_sequences(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "plain-no-link", "--tasks-root", str(root)])
+
+    monkeypatch.setattr("dot_tasks.cli._can_render_rich_detail_output", lambda: False)
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: False)
+
+    result = runner.invoke(app, ["view", "plain-no-link", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert "\x1b]8;;" not in result.output
 
 
 def test_view_renders_blocked_by_as_name_and_id(tmp_path: Path) -> None:
@@ -663,7 +702,7 @@ def test_view_non_tty_uses_plain_renderer(monkeypatch: pytest.MonkeyPatch, tmp_p
     monkeypatch.setattr("dot_tasks.cli._can_render_rich_detail_output", lambda: False)
     monkeypatch.setattr(
         "dot_tasks.cli.render.render_task_detail_plain",
-        lambda task, deps, blocked_by, unmet_count: "PLAIN-DETAIL",
+        lambda task, deps, blocked_by, unmet_count, *, enable_links=True: "PLAIN-DETAIL",
     )
     monkeypatch.setattr(
         "dot_tasks.cli.render.render_task_detail_rich",
@@ -683,7 +722,9 @@ def test_view_tty_uses_rich_renderer(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     monkeypatch.setattr("dot_tasks.cli._can_render_rich_detail_output", lambda: True)
     monkeypatch.setattr(
         "dot_tasks.cli.render.render_task_detail_plain",
-        lambda task, deps, blocked_by, unmet_count: pytest.fail("plain detail renderer should not run"),
+        lambda task, deps, blocked_by, unmet_count, *, enable_links=True: pytest.fail(
+            "plain detail renderer should not run"
+        ),
     )
     monkeypatch.setattr(
         "dot_tasks.cli.render.render_task_detail_rich",

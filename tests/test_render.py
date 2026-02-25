@@ -2,11 +2,18 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import re
 
 import pytest
 
 from dot_tasks import render
 from dot_tasks.models import Task, TaskMetadata
+
+OSC8_LINK_RE = re.compile(r"\x1b\]8;;[^\x1b]*\x1b\\(.*?)\x1b\]8;;\x1b\\")
+
+
+def _strip_osc8(text: str) -> str:
+    return OSC8_LINK_RE.sub(r"\1", text)
 
 
 def _task(name: str, status: str, priority: str, task_id: str, created: str) -> Task:
@@ -98,7 +105,14 @@ def test_render_task_list_rich_sections_and_labels() -> None:
     assert "p3" in text
 
 
-def test_render_task_detail_plain_header_first_layout() -> None:
+def test_render_task_detail_plain_header_first_layout(tmp_path: Path) -> None:
+    task_dir = tmp_path / "build-nightly-report"
+    task_dir.mkdir()
+    (task_dir / "task.md").write_text("task", encoding="utf-8")
+    (task_dir / "activity.md").write_text("activity", encoding="utf-8")
+    (task_dir / "plan.md").write_text("plan", encoding="utf-8")
+    (task_dir / "notes.txt").write_text("extra", encoding="utf-8")
+
     task = Task(
         metadata=TaskMetadata(
             task_id="t-20260206-001",
@@ -111,12 +125,12 @@ def test_render_task_detail_plain_header_first_layout() -> None:
             tags=["reporting", "automation"],
         ),
         body="\n\n## Summary\n- demo\n",
-        task_dir=Path("/tmp") / "build-nightly-report",
+        task_dir=task_dir,
     )
     deps = [("add-json-export", "t-20260205-001", "todo")]
     blocked_by = [("downstream-task", "t-20260207-001", "doing")]
 
-    output = render.render_task_detail_plain(task, deps, blocked_by, 1)
+    output = _strip_osc8(render.render_task_detail_plain(task, deps, blocked_by, 1))
     lines = output.splitlines()
 
     assert lines[0] == "build-nightly-report (t-20260206-001)"
@@ -125,10 +139,18 @@ def test_render_task_detail_plain_header_first_layout() -> None:
     assert lines[3] == "created: 2026-02-06    started: -    completed: -"
     assert lines[4] == "depends_on: add-json-export (t-20260205-001) [todo]"
     assert lines[5] == "blocked_by: downstream-task (t-20260207-001) [doing]"
+    assert lines[6] == f"dir: {task_dir.name}"
+    assert lines[7] == "files: task.md | activity.md | plan.md"
+    assert lines[8] == "extra: notes.txt"
     assert "## Summary" in output
 
 
-def test_render_task_detail_plain_uses_dash_for_empty_fields() -> None:
+def test_render_task_detail_plain_uses_dash_for_empty_fields(tmp_path: Path) -> None:
+    task_dir = tmp_path / "build-nightly-report"
+    task_dir.mkdir()
+    (task_dir / "task.md").write_text("task", encoding="utf-8")
+    (task_dir / "activity.md").write_text("activity", encoding="utf-8")
+
     task = Task(
         metadata=TaskMetadata(
             task_id="t-20260206-001",
@@ -139,21 +161,69 @@ def test_render_task_detail_plain_uses_dash_for_empty_fields() -> None:
             effort="m",
         ),
         body="",
-        task_dir=Path("/tmp") / "build-nightly-report",
+        task_dir=task_dir,
     )
 
-    output = render.render_task_detail_plain(task, [], [], 0)
+    raw_output = render.render_task_detail_plain(task, [], [], 0)
+    output = _strip_osc8(raw_output)
     assert "[todo] [p2] [m] [deps: ready]" in output
     assert "owner: -    tags: -" in output
     assert "started: -    completed: -" in output
     assert "depends_on: -" in output
     assert "blocked_by: -" in output
+    assert f"dir: {task_dir.name}" in output
+    assert "files: task.md | activity.md | plan.md (missing)" in output
+    assert "extra:" not in output
     assert "(empty)" in output
+    linked_labels = OSC8_LINK_RE.findall(raw_output)
+    assert "task.md" in linked_labels
+    assert "activity.md" in linked_labels
+    assert "plan.md" not in linked_labels
 
 
-def test_render_task_detail_rich_header_first_layout() -> None:
+def test_render_task_detail_plain_extra_unavailable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    task_dir = tmp_path / "build-nightly-report"
+    task_dir.mkdir()
+    (task_dir / "task.md").write_text("task", encoding="utf-8")
+    (task_dir / "activity.md").write_text("activity", encoding="utf-8")
+    (task_dir / "plan.md").write_text("plan", encoding="utf-8")
+
+    task = Task(
+        metadata=TaskMetadata(
+            task_id="t-20260206-001",
+            task_name="build-nightly-report",
+            status="todo",
+            date_created="2026-02-06",
+            priority="p2",
+            effort="m",
+        ),
+        body="",
+        task_dir=task_dir,
+    )
+
+    original_iterdir = Path.iterdir
+
+    def _broken_iterdir(self: Path):
+        if self.resolve() == task_dir.resolve():
+            raise OSError("unreadable")
+        return original_iterdir(self)
+
+    monkeypatch.setattr(Path, "iterdir", _broken_iterdir)
+    output = render.render_task_detail_plain(task, [], [], 0, enable_links=False)
+
+    assert "files: task.md | activity.md | plan.md" in output
+    assert "extra: (unavailable)" in output
+
+
+def test_render_task_detail_rich_header_first_layout(tmp_path: Path) -> None:
     pytest.importorskip("rich")
     from rich.console import Console
+
+    task_dir = tmp_path / "build-nightly-report"
+    task_dir.mkdir()
+    (task_dir / "task.md").write_text("task", encoding="utf-8")
+    (task_dir / "activity.md").write_text("activity", encoding="utf-8")
+    (task_dir / "plan.md").write_text("plan", encoding="utf-8")
 
     task = Task(
         metadata=TaskMetadata(
@@ -167,7 +237,7 @@ def test_render_task_detail_rich_header_first_layout() -> None:
             tags=["reporting", "automation"],
         ),
         body="\n\n## Summary\n- demo\n",
-        task_dir=Path("/tmp") / "build-nightly-report",
+        task_dir=task_dir,
     )
     deps = [("add-json-export", "t-20260205-001", "todo")]
     blocked_by = [("downstream-task", "t-20260207-001", "doing")]
@@ -182,6 +252,9 @@ def test_render_task_detail_rich_header_first_layout() -> None:
     assert "owner: alex    tags: reporting, automation" in text
     assert "depends_on: add-json-export (t-20260205-001) [todo]" in text
     assert "blocked_by: downstream-task (t-20260207-001) [doing]" in text
+    assert f"dir: {task_dir.name}" in text
+    assert "files: task.md | activity.md | plan.md" in text
+    assert "extra:" not in text
     assert "## Summary" in text
 
 

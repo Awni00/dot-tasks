@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import json
+from pathlib import Path
 from typing import Iterable
 
 from .models import Task
@@ -282,11 +283,108 @@ def _normalized_task_body(body: str) -> str:
     return body.lstrip("\n").rstrip() or "(empty)"
 
 
+def _file_uri(path: Path) -> str:
+    return path.resolve().as_uri()
+
+
+def _plain_link(path: Path, label: str) -> str:
+    uri = _file_uri(path)
+    return f"\033]8;;{uri}\033\\{label}\033]8;;\033\\"
+
+
+def _rich_link(path: Path, label: str):
+    from rich.text import Text
+
+    text = Text(label, style="underline cyan")
+    text.stylize(f"link {_file_uri(path)}")
+    return text
+
+
+def _task_file_detail_state(
+    task: Task,
+) -> tuple[Path, list[tuple[Path, bool]], list[Path] | None]:
+    task_dir = task.task_dir.resolve()
+    canonical_files = [
+        task.task_md_path,
+        task.activity_path,
+        task.plan_path,
+    ]
+    canonical_names = {path.name for path in canonical_files}
+    canonical_rows = [(path.resolve(), path.exists()) for path in canonical_files]
+
+    try:
+        extras = sorted(
+            path.resolve()
+            for path in task.task_dir.iterdir()
+            if path.name not in canonical_names
+        )
+    except OSError:
+        return task_dir, canonical_rows, None
+    return task_dir, canonical_rows, extras
+
+
+def _task_file_detail_lines_plain(task: Task, *, enable_links: bool) -> list[str]:
+    task_dir, canonical_rows, extras = _task_file_detail_state(task)
+    lines = [f"dir: {_plain_link(task_dir, task_dir.name) if enable_links else task_dir.name}"]
+
+    file_tokens: list[str] = []
+    for path, exists in canonical_rows:
+        if exists:
+            file_tokens.append(_plain_link(path, path.name) if enable_links else path.name)
+        else:
+            file_tokens.append(f"{path.name} (missing)")
+    lines.append(f"files: {' | '.join(file_tokens)}")
+
+    if extras is None:
+        lines.append("extra: (unavailable)")
+    elif extras:
+        lines.append(
+            "extra: "
+            + " | ".join(
+                _plain_link(path, path.name) if enable_links else path.name
+                for path in extras
+            )
+        )
+    return lines
+
+
+def _task_file_detail_lines_rich(task: Task):
+    from rich.text import Text
+
+    task_dir, canonical_rows, extras = _task_file_detail_state(task)
+    first_line = Text("dir: ")
+    first_line.append_text(_rich_link(task_dir, task_dir.name))
+    lines = [first_line]
+
+    files_line = Text("files: ")
+    for index, (path, exists) in enumerate(canonical_rows):
+        if index > 0:
+            files_line.append(" | ")
+        if exists:
+            files_line.append_text(_rich_link(path, path.name))
+        else:
+            files_line.append(f"{path.name} (missing)")
+    lines.append(files_line)
+
+    if extras is None:
+        lines.append(Text("extra: (unavailable)"))
+    elif extras:
+        extra_line = Text("extra: ")
+        for index, path in enumerate(extras):
+            if index > 0:
+                extra_line.append(" | ")
+            extra_line.append_text(_rich_link(path, path.name))
+        lines.append(extra_line)
+    return lines
+
+
 def render_task_detail_plain(
     task: Task,
     dependency_rows: list[tuple[str, str, str]],
     blocked_by_rows: list[tuple[str, str, str]],
     unmet_count: int,
+    *,
+    enable_links: bool = True,
 ) -> str:
     meta = task.metadata
     tags = ", ".join(meta.tags) if meta.tags else "-"
@@ -300,6 +398,7 @@ def render_task_detail_plain(
         ),
         f"depends_on: {_inline_dependency_rows(dependency_rows)}",
         f"blocked_by: {_inline_dependency_rows(blocked_by_rows)}",
+        *_task_file_detail_lines_plain(task, enable_links=enable_links),
         "",
         _normalized_task_body(task.body),
     ]
@@ -342,9 +441,20 @@ def render_task_detail_rich(
     )
     depends_line = Text(f"depends_on: {_inline_dependency_rows(dependency_rows)}")
     blocked_line = Text(f"blocked_by: {_inline_dependency_rows(blocked_by_rows)}")
+    file_lines = _task_file_detail_lines_rich(task)
 
     body_text = Text(_normalized_task_body(task.body))
-    return Group(title, chips, owner_line, dates_line, depends_line, blocked_line, Text(""), body_text)
+    return Group(
+        title,
+        chips,
+        owner_line,
+        dates_line,
+        depends_line,
+        blocked_line,
+        *file_lines,
+        Text(""),
+        body_text,
+    )
 
 
 def render_task_detail_json(task: Task, dependency_rows: list[tuple[str, str, str]]) -> str:
