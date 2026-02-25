@@ -168,6 +168,81 @@ def _prompt_depends_on_choice(
         return [value for idx, (value, _) in enumerate(options) if idx in selected]
 
 
+def _prompt_tag_choice(
+    title: str,
+    options: list[tuple[str, str]],
+    default_values: list[str] | None = None,
+) -> list[str] | None:
+    if not options:
+        return []
+
+    try:
+        selected = select_fuzzy_many(title, options, default_values=default_values)
+    except SelectorUnavailableError as exc:
+        _warn_selector_fallback(exc)
+    else:
+        return selected
+
+    defaults = set(default_values or [])
+    typer.echo(title)
+    default_numbers: list[str] = []
+    for idx, (value, label) in enumerate(options, start=1):
+        mark = "x" if value in defaults else " "
+        typer.echo(f"{idx}. [{mark}] {label}")
+        if value in defaults:
+            default_numbers.append(str(idx))
+
+    while True:
+        raw = _safe_prompt(
+            "Enter comma-separated numbers",
+            default=",".join(default_numbers),
+        )
+        if raw is None:
+            return None
+        raw = raw.strip()
+        if not raw:
+            return []
+
+        tokens = [token.strip() for token in raw.split(",") if token.strip()]
+        try:
+            indexes = [int(token) for token in tokens]
+        except ValueError:
+            typer.echo("Invalid selection. Use comma-separated numbers.")
+            continue
+
+        if any(index < 1 or index > len(options) for index in indexes):
+            typer.echo("Selection out of range.")
+            continue
+
+        selected = {index - 1 for index in indexes}
+        return [value for idx, (value, _) in enumerate(options) if idx in selected]
+
+
+def _prompt_tags(
+    tag_options: list[tuple[str, str]],
+    *,
+    default_values: list[str] | None = None,
+) -> list[str] | None:
+    selected_existing: list[str]
+    if tag_options:
+        selected_existing = _prompt_tag_choice(
+            "tags (select existing)",
+            tag_options,
+            default_values=default_values,
+        )
+        if selected_existing is None:
+            return None
+    else:
+        selected_existing = []
+
+    new_tags = _safe_prompt("new tags (comma separated, blank none)", default="")
+    if new_tags is None:
+        return None
+    created_tags = [token.strip() for token in new_tags.split(",") if token.strip()]
+
+    return sorted({*selected_existing, *created_tags})
+
+
 def _prompt_yes_no(title: str, *, default: bool = False) -> bool | None:
     options = [("yes", "Yes"), ("no", "No")]
     default_value = "yes" if default else "no"
@@ -356,8 +431,10 @@ def init_config_form(
 def create_form(
     default_name: str | None = None,
     dependency_options: list[tuple[str, str]] | None = None,
+    tag_options: list[tuple[str, str]] | None = None,
 ) -> dict[str, Any] | None:
     dep_options = dependency_options or []
+    available_tags = tag_options or []
 
     task_name = _safe_prompt("task_name", default=default_name or "")
     if task_name is None:
@@ -389,7 +466,7 @@ def create_form(
     )
     if spec_readiness is None:
         return None
-    tags = _safe_prompt("tags (comma separated)", default="")
+    tags = _prompt_tags(available_tags)
     if tags is None:
         return None
     if not dep_options:
@@ -416,7 +493,7 @@ def create_form(
         "owner": owner.strip() or None,
         "summary": summary.strip(),
         "spec_readiness": spec_readiness,
-        "tags": [t.strip() for t in tags.split(",") if t.strip()],
+        "tags": tags,
         "depends_on": depends_on,
     }
 
@@ -424,8 +501,10 @@ def create_form(
 def update_form(
     task: Task,
     dependency_options: list[tuple[str, str]] | None = None,
+    tag_options: list[tuple[str, str]] | None = None,
 ) -> dict[str, Any] | None:
     dep_options = dependency_options or []
+    available_tags = tag_options or []
 
     priority = _prompt_single_choice(
         "priority",
@@ -451,7 +530,7 @@ def update_form(
     owner = _safe_prompt("owner (blank to keep)", default=task.metadata.owner or "")
     if owner is None:
         return None
-    tags = _safe_prompt("add tags (comma separated, blank none)", default="")
+    tags = _prompt_tags(available_tags, default_values=task.metadata.tags)
     if tags is None:
         return None
     depends_on = _prompt_depends_on_choice(
@@ -466,7 +545,7 @@ def update_form(
         "effort": None if effort == "__keep__" else effort,
         "spec_readiness": None if spec_readiness == "__keep__" else spec_readiness,
         "owner": owner,
-        "tags": [t.strip() for t in tags.split(",") if t.strip()],
+        "tags": tags,
         "depends_on": depends_on,
         "replace_depends_on": True,
     }

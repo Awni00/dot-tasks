@@ -637,6 +637,53 @@ def test_depends_on_choice_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) 
     assert prompt_ui._prompt_depends_on_choice("depends_on", [("a", "Task A")]) is None
 
 
+def test_tag_choice_fuzzy_failure_falls_back_to_numeric(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        prompt_ui,
+        "select_fuzzy_many",
+        lambda title, options, default_values=None: (_ for _ in ()).throw(
+            selector_ui.SelectorUnavailableError("fallback")
+        ),
+    )
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: "2,1")
+    values = prompt_ui._prompt_tag_choice("tags", [("a", "Tag A"), ("b", "Tag B")])
+    assert values == ["a", "b"]
+
+
+def test_tag_choice_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(prompt_ui, "select_fuzzy_many", lambda *args, **kwargs: None)
+    assert prompt_ui._prompt_tag_choice("tags", [("a", "Tag A")]) is None
+
+
+def test_prompt_tags_merges_existing_and_new(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(prompt_ui, "_prompt_tag_choice", lambda *args, **kwargs: ["backend", "api"])
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: "api, new-tag")
+
+    values = prompt_ui._prompt_tags([("backend", "backend"), ("api", "api")])
+    assert values == ["api", "backend", "new-tag"]
+
+
+def test_prompt_tags_cancel_when_existing_selection_canceled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(prompt_ui, "_prompt_tag_choice", lambda *args, **kwargs: None)
+    assert prompt_ui._prompt_tags([("backend", "backend")]) is None
+
+
+def test_prompt_tags_no_existing_options_prompts_new_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        prompt_ui,
+        "_prompt_tag_choice",
+        lambda *args, **kwargs: pytest.fail("tag choice should not run without options"),
+    )
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: "x, y")
+    assert prompt_ui._prompt_tags([]) == ["x", "y"]
+
+
+def test_prompt_tags_cancel_when_new_tag_prompt_canceled(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(prompt_ui, "_prompt_tag_choice", lambda *args, **kwargs: ["backend"])
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: None)
+    assert prompt_ui._prompt_tags([("backend", "backend")]) is None
+
+
 def test_update_form_depends_on_uses_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     choices = iter(["__keep__", "__keep__", "__keep__"])
     captured: dict[str, object] = {}
@@ -657,6 +704,39 @@ def test_update_form_depends_on_uses_defaults(monkeypatch: pytest.MonkeyPatch) -
     assert payload["spec_readiness"] is None
     assert payload["depends_on"] == ["t-2"]
     assert "note" not in payload
+
+
+def test_create_form_uses_prompt_tags_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    choices = iter(["p2", "m", "unspecified"])
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(prompt_ui, "_prompt_yes_no", lambda *args, **kwargs: False)
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: "")
+    monkeypatch.setattr(prompt_ui, "_prompt_tags", lambda *args, **kwargs: ["backend", "api"])
+
+    payload = prompt_ui.create_form(default_name="test-task", dependency_options=[], tag_options=[])
+    assert payload is not None
+    assert payload["tags"] == ["backend", "api"]
+
+
+def test_update_form_tag_prompt_uses_existing_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    choices = iter(["__keep__", "__keep__", "__keep__"])
+    captured: dict[str, object] = {}
+
+    def _prompt_tags(tag_options, default_values=None):
+        captured["defaults"] = default_values
+        return ["new-tag"]
+
+    task = _task("alpha")
+    task.metadata.tags = ["backend", "ops"]
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: "")
+    monkeypatch.setattr(prompt_ui, "_prompt_tags", _prompt_tags)
+    monkeypatch.setattr(prompt_ui, "_prompt_depends_on_choice", lambda *args, **kwargs: [])
+
+    payload = prompt_ui.update_form(task, dependency_options=[], tag_options=[("backend", "backend")])
+    assert payload is not None
+    assert captured["defaults"] == ["backend", "ops"]
+    assert payload["tags"] == ["new-tag"]
 
 
 def test_yes_no_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:

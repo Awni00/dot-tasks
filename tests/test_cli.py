@@ -1490,7 +1490,7 @@ def test_update_interactive_form_replaces_dependencies(
     runner.invoke(app, ["create", "dep-b", "--tasks-root", str(root)])
     runner.invoke(
         app,
-        ["create", "main-task", "--depends-on", "dep-a", "--tasks-root", str(root)],
+        ["create", "main-task", "--depends-on", "dep-a", "--tag", "legacy", "--tasks-root", str(root)],
     )
 
     dep_b_meta, _ = _read_task_md(_task_dir(root, "todo", "dep-b") / "task.md")
@@ -1499,7 +1499,7 @@ def test_update_interactive_form_replaces_dependencies(
     monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
     monkeypatch.setattr(
         "dot_tasks.cli.update_form",
-        lambda task, dependency_options: {
+        lambda task, dependency_options, tag_options: {
             "priority": None,
             "effort": None,
             "owner": task.metadata.owner or "",
@@ -1513,6 +1513,7 @@ def test_update_interactive_form_replaces_dependencies(
     assert result.exit_code == 0
     meta, _ = _read_task_md(_task_dir(root, "todo", "main-task") / "task.md")
     assert meta["depends_on"] == [dep_b_id]
+    assert meta["tags"] == []
 
 
 def test_update_dependency_options_show_status_and_use_list_order(
@@ -1521,10 +1522,10 @@ def test_update_dependency_options_show_status_and_use_list_order(
 ) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "dep-doing", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "dep-todo-new", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "dep-todo-old", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "main-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "dep-doing", "--tag", "backend", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "dep-todo-new", "--tag", "api", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "dep-todo-old", "--tag", "backend", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "main-task", "--tag", "main", "--tasks-root", str(root)])
 
     _set_date_created(root, "todo", "dep-doing", "2026-02-01")
     _set_date_created(root, "todo", "dep-todo-new", "2026-02-03")
@@ -1539,8 +1540,9 @@ def test_update_dependency_options_show_status_and_use_list_order(
 
     captured: dict[str, object] = {}
 
-    def _update_form(task, dependency_options):
+    def _update_form(task, dependency_options, tag_options):
         captured["dependency_options"] = dependency_options
+        captured["tag_options"] = tag_options
         return {
             "priority": None,
             "effort": None,
@@ -1569,6 +1571,11 @@ def test_update_dependency_options_show_status_and_use_list_order(
             dep_doing_meta["task_id"],
             f"dep-doing ({dep_doing_meta['task_id']}) [doing]",
         ),
+    ]
+    assert captured["tag_options"] == [
+        ("api", "api (1)"),
+        ("backend", "backend (2)"),
+        ("main", "main (1)"),
     ]
 
 
@@ -1712,9 +1719,45 @@ def test_create_interactive_cancel_prints_canceled_and_exits_1(
     monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
     monkeypatch.setattr(
         "dot_tasks.cli.create_form",
-        lambda default_name, dependency_options: None,
+        lambda default_name, dependency_options, tag_options: None,
     )
 
     result = runner.invoke(app, ["create", "--tasks-root", str(root)])
     assert result.exit_code == 1
     assert "Canceled." in result.output
+
+
+def test_create_interactive_form_receives_tag_options(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "tag-a", "--tag", "backend", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "tag-b", "--tag", "backend", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "tag-c", "--tag", "api", "--tasks-root", str(root)])
+
+    captured: dict[str, object] = {}
+
+    def _create_form(default_name, dependency_options, tag_options):
+        captured["tag_options"] = tag_options
+        return {
+            "task_name": "interactive-created",
+            "priority": "p2",
+            "effort": "m",
+            "owner": None,
+            "summary": "",
+            "spec_readiness": "unspecified",
+            "tags": [],
+            "depends_on": [],
+        }
+
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr("dot_tasks.cli.create_form", _create_form)
+
+    result = runner.invoke(app, ["create", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert captured["tag_options"] == [
+        ("api", "api (1)"),
+        ("backend", "backend (2)"),
+    ]

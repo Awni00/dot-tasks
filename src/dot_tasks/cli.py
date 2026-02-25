@@ -336,6 +336,14 @@ def _dependency_choices(tasks: list[Task], *, exclude_task_id: str | None = None
     return choices
 
 
+def _tag_choices(tasks: list[Task]) -> list[tuple[str, str]]:
+    counts: dict[str, int] = {}
+    for task in tasks:
+        for tag in sorted(set(task.metadata.tags)):
+            counts[tag] = counts.get(tag, 0) + 1
+    return [(tag, f"{tag} ({counts[tag]})") for tag in sorted(counts)]
+
+
 def _run_and_handle(fn) -> None:
     try:
         fn()
@@ -663,10 +671,13 @@ def create_cmd(
         local_summary = summary
 
         if open_form:
-            dependency_options = _dependency_choices(svc.list_tasks())
+            tasks = svc.list_tasks()
+            dependency_options = _dependency_choices(tasks)
+            tag_options = _tag_choices(tasks)
             form = create_form(
                 default_name=task_name,
                 dependency_options=dependency_options,
+                tag_options=tag_options,
             )
             if form is None:
                 _exit_canceled(1)
@@ -935,16 +946,23 @@ def update_cmd(
         local_spec_readiness = spec_readiness
         local_owner = owner
         local_tags = list(tag)
+        local_replace_tags = replace_tags
         local_depends = list(depends_on)
         local_replace_depends = clear_depends_on
 
         open_form = _can_prompt(interactive_enabled) and (task_name is None or not has_edit_flags)
         if open_form:
+            tasks = svc.list_tasks()
             dependency_options = _dependency_choices(
-                svc.list_tasks(),
+                tasks,
                 exclude_task_id=selected_task.metadata.task_id,
             )
-            form = update_form(selected_task, dependency_options=dependency_options)
+            tag_options = _tag_choices(tasks)
+            form = update_form(
+                selected_task,
+                dependency_options=dependency_options,
+                tag_options=tag_options,
+            )
             if form is None:
                 _exit_canceled(1)
             local_priority = form.get("priority")
@@ -952,6 +970,7 @@ def update_cmd(
             local_spec_readiness = form.get("spec_readiness")
             local_owner = form.get("owner")
             local_tags = list(form.get("tags") or [])
+            local_replace_tags = True
             local_depends = list(form.get("depends_on") or [])
             local_replace_depends = bool(form.get("replace_depends_on"))
 
@@ -962,7 +981,7 @@ def update_cmd(
             spec_readiness=local_spec_readiness,
             owner=local_owner,
             tags=local_tags,
-            replace_tags=replace_tags,
+            replace_tags=local_replace_tags,
             depends_on=local_depends,
             clear_depends_on=clear_depends_on or local_replace_depends,
         )

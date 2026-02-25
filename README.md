@@ -127,6 +127,8 @@ uv pip install -e ".[dev]"
 | `rename` | Rename a task. | `dot-tasks rename <task_name> <new_task_name>` |
 | `delete` | Move a task to `trash/`, or delete permanently with `--hard`. | `dot-tasks delete <task_name> [--hard]` |
 
+Interactive `create` and interactive `update` include a two-step tag flow: select existing tags (multi-select) and optionally add new tags.
+
 Tag examples:
 
 ```bash
