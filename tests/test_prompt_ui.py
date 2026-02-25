@@ -58,12 +58,12 @@ class _FakeInquirer:
         return _FakePrompt(result=self.text_result, error=self.text_error)
 
 
-def _task(name: str, task_id: str = "t-20260201-001") -> Task:
+def _task(name: str, task_id: str = "t-20260201-001", status: str = "todo") -> Task:
     return Task(
         metadata=TaskMetadata(
             task_id=task_id,
             task_name=name,
-            status="todo",
+            status=status,
             date_created="2026-02-01",
         ),
         body="",
@@ -103,10 +103,17 @@ def test_choose_task_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_choose_task_uses_fuzzy_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(prompt_ui, "select_fuzzy", lambda title, options, default_value=None: "alpha")
+    captured: dict[str, object] = {}
+
+    def _select_fuzzy(title, options, default_value=None):
+        captured["options"] = options
+        return "alpha"
+
+    monkeypatch.setattr(prompt_ui, "select_fuzzy", _select_fuzzy)
     monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: pytest.fail("numeric prompt used"))
     selected = prompt_ui.choose_task([_task("alpha")])
     assert selected == "alpha"
+    assert captured["options"] == [("alpha", "alpha (t-20260201-001) [todo]")]
 
 
 def test_choose_task_fuzzy_default_is_empty(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -133,6 +140,25 @@ def test_choose_task_fuzzy_failure_falls_back_to_numeric(monkeypatch: pytest.Mon
     monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: "1")
     selected = prompt_ui.choose_task([_task("alpha")], title="Select task")
     assert selected == "alpha"
+
+
+def test_choose_task_numeric_fallback_shows_status_suffix(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setattr(
+        prompt_ui,
+        "select_fuzzy",
+        lambda title, options, default_value=None: (_ for _ in ()).throw(
+            selector_ui.SelectorUnavailableError("selector runtime failed")
+        ),
+    )
+    monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: "1")
+
+    selected = prompt_ui.choose_task([_task("alpha", status="doing")], title="Select task")
+    assert selected == "alpha"
+    output = capsys.readouterr().out
+    assert "1. alpha (t-20260201-001) [doing]" in output
 
 
 def test_init_config_form_uses_selector_when_available(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -22,7 +22,6 @@ from . import storage
 
 
 STATUS_SORT = {"todo": 0, "doing": 1, "completed": 2}
-PRIORITY_SORT = {"p0": 0, "p1": 1, "p2": 2, "p3": 3}
 
 
 def _today() -> str:
@@ -215,8 +214,7 @@ class TaskService:
             tasks,
             key=lambda task: (
                 STATUS_SORT.get(task.metadata.status, 99),
-                PRIORITY_SORT.get(task.metadata.priority, 99),
-                task.metadata.date_created,
+                -int(task.metadata.date_created.replace("-", "")),
                 task.metadata.task_name,
             ),
         )

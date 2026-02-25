@@ -764,7 +764,7 @@ def list_cmd(
     nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
 ) -> None:
-    """List tasks grouped by status and sorted by priority/date."""
+    """List tasks grouped by status and sorted by created date (newest first)."""
 
     def _inner() -> None:
         svc = _service(tasks_root)

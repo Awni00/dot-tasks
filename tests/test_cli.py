@@ -42,6 +42,22 @@ def _task_dir(tasks_root: Path, bucket: str, task_name: str) -> Path:
     return tasks_root / bucket / f"{today}-{task_name}"
 
 
+def _task_md_path(tasks_root: Path, bucket: str, task_name: str) -> Path:
+    matches = sorted((tasks_root / bucket).glob(f"*-{task_name}/task.md"))
+    assert len(matches) == 1
+    return matches[0]
+
+
+def _set_date_created(tasks_root: Path, bucket: str, task_name: str, date_created: str) -> None:
+    task_md = _task_md_path(tasks_root, bucket, task_name)
+    meta, body = _read_task_md(task_md)
+    meta["date_created"] = date_created
+    task_md.write_text(
+        f"---\n{yaml.safe_dump(meta, sort_keys=False)}---\n{body}",
+        encoding="utf-8",
+    )
+
+
 def _read_config(path: Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
@@ -778,6 +794,34 @@ def test_list_grouped_sorted(tmp_path: Path) -> None:
     assert "a" in joined
 
 
+def test_list_json_sorted_by_status_and_date_created_desc(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "todo-old", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "todo-new", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "doing-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "done-task", "--tasks-root", str(root)])
+
+    _set_date_created(root, "todo", "todo-old", "2026-02-01")
+    _set_date_created(root, "todo", "todo-new", "2026-02-03")
+    _set_date_created(root, "todo", "doing-task", "2026-02-02")
+    _set_date_created(root, "todo", "done-task", "2026-02-04")
+
+    runner.invoke(app, ["start", "doing-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["start", "done-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["complete", "done-task", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["list", "--json", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert [item["task_name"] for item in payload] == [
+        "todo-new",
+        "todo-old",
+        "doing-task",
+        "done-task",
+    ]
+
+
 def test_list_filters_by_tag_json(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
@@ -1387,6 +1431,63 @@ def test_update_interactive_form_replaces_dependencies(
     assert result.exit_code == 0
     meta, _ = _read_task_md(_task_dir(root, "todo", "main-task") / "task.md")
     assert meta["depends_on"] == [dep_b_id]
+
+
+def test_update_dependency_options_show_status_and_use_list_order(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "dep-doing", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "dep-todo-new", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "dep-todo-old", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "main-task", "--tasks-root", str(root)])
+
+    _set_date_created(root, "todo", "dep-doing", "2026-02-01")
+    _set_date_created(root, "todo", "dep-todo-new", "2026-02-03")
+    _set_date_created(root, "todo", "dep-todo-old", "2026-02-02")
+    _set_date_created(root, "todo", "main-task", "2026-02-04")
+
+    dep_doing_meta, _ = _read_task_md(_task_md_path(root, "todo", "dep-doing"))
+    dep_todo_new_meta, _ = _read_task_md(_task_md_path(root, "todo", "dep-todo-new"))
+    dep_todo_old_meta, _ = _read_task_md(_task_md_path(root, "todo", "dep-todo-old"))
+
+    runner.invoke(app, ["start", "dep-doing", "--tasks-root", str(root)])
+
+    captured: dict[str, object] = {}
+
+    def _update_form(task, dependency_options):
+        captured["dependency_options"] = dependency_options
+        return {
+            "priority": None,
+            "effort": None,
+            "spec_readiness": None,
+            "owner": task.metadata.owner or "",
+            "tags": task.metadata.tags,
+            "depends_on": [],
+            "replace_depends_on": False,
+        }
+
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr("dot_tasks.cli.update_form", _update_form)
+
+    result = runner.invoke(app, ["update", "main-task", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert captured["dependency_options"] == [
+        (
+            dep_todo_new_meta["task_id"],
+            f"dep-todo-new ({dep_todo_new_meta['task_id']}) [todo]",
+        ),
+        (
+            dep_todo_old_meta["task_id"],
+            f"dep-todo-old ({dep_todo_old_meta['task_id']}) [todo]",
+        ),
+        (
+            dep_doing_meta["task_id"],
+            f"dep-doing ({dep_doing_meta['task_id']}) [doing]",
+        ),
+    ]
 
 
 def test_update_metadata_appends_default_activity_note(tmp_path: Path) -> None:

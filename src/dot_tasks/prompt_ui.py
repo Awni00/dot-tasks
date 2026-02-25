@@ -199,7 +199,10 @@ def choose_task(tasks: list[Task], title: str = "Select task") -> str | None:
         return None
 
     options = [
-        (task.metadata.task_name, f"{task.metadata.task_name} ({task.metadata.task_id})")
+        (
+            task.metadata.task_name,
+            f"{task.metadata.task_name} ({task.metadata.task_id}) [{task.metadata.status}]",
+        )
         for task in tasks
     ]
     try:
@@ -211,7 +214,9 @@ def choose_task(tasks: list[Task], title: str = "Select task") -> str | None:
 
     typer.echo(title)
     for idx, task in enumerate(tasks, start=1):
-        typer.echo(f"{idx}. {task.metadata.task_name} ({task.metadata.task_id})")
+        typer.echo(
+            f"{idx}. {task.metadata.task_name} ({task.metadata.task_id}) [{task.metadata.status}]"
+        )
     typer.echo("0. cancel")
 
     raw = _safe_prompt("Enter number", default="1")
