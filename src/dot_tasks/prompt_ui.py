@@ -6,7 +6,7 @@ from typing import Any
 
 import typer
 
-from .models import Task, VALID_EFFORTS, VALID_PRIORITIES
+from .models import Task, VALID_EFFORTS, VALID_PRIORITIES, VALID_SPEC_READINESS
 from .selector_ui import (
     SelectorUnavailableError,
     select_fuzzy,
@@ -377,6 +377,13 @@ def create_form(
     summary = _safe_prompt("summary", default="")
     if summary is None:
         return None
+    spec_readiness = _prompt_single_choice(
+        "spec_readiness",
+        [(value, value) for value in VALID_SPEC_READINESS],
+        default_value="unspecified",
+    )
+    if spec_readiness is None:
+        return None
     tags = _safe_prompt("tags (comma separated)", default="")
     if tags is None:
         return None
@@ -403,6 +410,7 @@ def create_form(
         "effort": effort,
         "owner": owner.strip() or None,
         "summary": summary.strip(),
+        "spec_readiness": spec_readiness,
         "tags": [t.strip() for t in tags.split(",") if t.strip()],
         "depends_on": depends_on,
     }
@@ -428,6 +436,13 @@ def update_form(
     )
     if effort is None:
         return None
+    spec_readiness = _prompt_single_choice(
+        "spec_readiness",
+        [("__keep__", "Keep current"), *[(value, value) for value in VALID_SPEC_READINESS]],
+        default_value="__keep__",
+    )
+    if spec_readiness is None:
+        return None
     owner = _safe_prompt("owner (blank to keep)", default=task.metadata.owner or "")
     if owner is None:
         return None
@@ -444,6 +459,7 @@ def update_form(
     return {
         "priority": None if priority == "__keep__" else priority,
         "effort": None if effort == "__keep__" else effort,
+        "spec_readiness": None if spec_readiness == "__keep__" else spec_readiness,
         "owner": owner,
         "tags": [t.strip() for t in tags.split(",") if t.strip()],
         "depends_on": depends_on,

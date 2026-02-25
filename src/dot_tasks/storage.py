@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import fields
+from dataclasses import MISSING, fields
 import datetime as dt
 from pathlib import Path
 import shutil
@@ -28,6 +28,7 @@ LIST_TABLE_COLUMNS_SUPPORTED = (
     "status",
     "priority",
     "effort",
+    "spec_readiness",
     "deps",
     "created",
 )
@@ -37,6 +38,7 @@ LIST_TABLE_COLUMN_DEFAULT_WIDTHS: dict[str, int] = {
     "status": 10,
     "priority": 8,
     "effort": 6,
+    "spec_readiness": 14,
     "deps": 12,
     "created": 10,
 }
@@ -409,10 +411,22 @@ def parse_task(task_dir: Path) -> Task:
     task_md = task_dir / "task.md"
     text = task_md.read_text(encoding="utf-8")
     data, body = split_frontmatter(text)
-    missing = [key for key in TASK_META_KEYS if key not in data]
-    if missing:
-        raise ValueError(f"Task metadata missing keys {missing} in {task_md}")
-    meta = TaskMetadata(**{key: data[key] for key in TASK_META_KEYS})
+    payload: dict[str, Any] = {}
+    missing_required: list[str] = []
+    for field in fields(TaskMetadata):
+        if field.name in data:
+            payload[field.name] = data[field.name]
+            continue
+        if field.default is not MISSING:
+            payload[field.name] = field.default
+            continue
+        if field.default_factory is not MISSING:
+            payload[field.name] = field.default_factory()
+            continue
+        missing_required.append(field.name)
+    if missing_required:
+        raise ValueError(f"Task metadata missing keys {missing_required} in {task_md}")
+    meta = TaskMetadata(**payload)
     return Task(metadata=meta, body=body, task_dir=task_dir)
 
 

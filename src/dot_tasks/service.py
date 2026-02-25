@@ -10,6 +10,7 @@ from .models import (
     TASK_NAME_RE,
     VALID_EFFORTS,
     VALID_PRIORITIES,
+    VALID_SPEC_READINESS,
     VALID_STATUSES,
     Task,
     TaskConflictError,
@@ -106,6 +107,10 @@ class TaskService:
                 raise TaskValidationError(f"Invalid priority for {task.metadata.task_name}")
             if task.metadata.effort not in VALID_EFFORTS:
                 raise TaskValidationError(f"Invalid effort for {task.metadata.task_name}")
+            if task.metadata.spec_readiness not in VALID_SPEC_READINESS:
+                raise TaskValidationError(
+                    f"Invalid spec_readiness for {task.metadata.task_name}"
+                )
 
         graph: dict[str, list[str]] = {}
         for task in tasks:
@@ -267,6 +272,7 @@ class TaskService:
         summary: str = "",
         priority: str = "p2",
         effort: str = "m",
+        spec_readiness: str = "unspecified",
         owner: str | None = None,
         tags: Iterable[str] | None = None,
         depends_on: Iterable[str] | None = None,
@@ -276,6 +282,8 @@ class TaskService:
             raise TaskValidationError(f"Invalid priority: {priority}")
         if effort not in VALID_EFFORTS:
             raise TaskValidationError(f"Invalid effort: {effort}")
+        if spec_readiness not in VALID_SPEC_READINESS:
+            raise TaskValidationError(f"Invalid spec_readiness: {spec_readiness}")
 
         self._ensure_unique_task_name(task_name)
         today = _today()
@@ -297,6 +305,7 @@ class TaskService:
             date_created=today,
             priority=priority,
             effort=effort,
+            spec_readiness=spec_readiness,
             owner=owner,
             depends_on=dep_ids,
             blocked_by=[],
@@ -377,6 +386,7 @@ class TaskService:
         *,
         priority: str | None = None,
         effort: str | None = None,
+        spec_readiness: str | None = None,
         owner: str | None = None,
         tags: Iterable[str] | None = None,
         replace_tags: bool = False,
@@ -393,6 +403,10 @@ class TaskService:
             if effort not in VALID_EFFORTS:
                 raise TaskValidationError(f"Invalid effort: {effort}")
             task.metadata.effort = effort
+        if spec_readiness is not None:
+            if spec_readiness not in VALID_SPEC_READINESS:
+                raise TaskValidationError(f"Invalid spec_readiness: {spec_readiness}")
+            task.metadata.spec_readiness = spec_readiness
         if owner is not None:
             task.metadata.owner = owner or None
 

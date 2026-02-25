@@ -116,13 +116,13 @@ uv pip install -e ".[dev]"
 | `init` | Create `.tasks/` and write/update managed config settings; can also append workflow guidance section AGENTS.md and install the skill via `npx skills`. | `dot-tasks init` |
 | `install-skill` | Install the canonical `dot-tasks` skill via `npx skills`. | `dot-tasks install-skill [--yes]` |
 | `add-agents-snippet` | Add or update the canonical `dot-tasks` section in AGENTS policy markdown. | `dot-tasks add-agents-snippet [--agents-file <path>] [--yes]` |
-| `create` | Add a new task to `todo/`. | `dot-tasks create <task_name>` |
+| `create` | Add a new task to `todo/`. | `dot-tasks create <task_name> [--spec-readiness unspecified|rough|ready|autonomous]` |
 | `start` | Move a task to `doing/` and create `plan.md`. | `dot-tasks start <task_name>` |
 | `complete` | Move a task to `done/`. | `dot-tasks complete <task_name>` |
 | `list` | List tasks by status and optional tag filters (rich/plain/JSON depending on context). | `dot-tasks list [todo|doing|done] [--tag <tag> ...] [--json]` |
 | `tags` | Show task counts by tag with optional status filter (rich/plain/JSON depending on context). | `dot-tasks tags [todo|doing|done] [--sort count|name] [--json]` |
 | `view` | Show full details for one task, including clickable file links for `task.md`, `activity.md`, `plan.md`, and any extra files. | `dot-tasks view <task_name> [--json]` |
-| `update` | Update metadata, dependencies, tags, owner, effort, or priority. | `dot-tasks update <task_name> ...` |
+| `update` | Update metadata, dependencies, tags, owner, effort, priority, or spec readiness. | `dot-tasks update <task_name> ...` |
 | `log-activity` | Append a manual activity note with optional actor override. | `dot-tasks log-activity <task_name> --note "..." [--actor agent]` |
 | `rename` | Rename a task. | `dot-tasks rename <task_name> <new_task_name>` |
 | `delete` | Move a task to `trash/`, or delete permanently with `--hard`. | `dot-tasks delete <task_name> [--hard]` |

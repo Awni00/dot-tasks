@@ -316,7 +316,7 @@ def test_create_form_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> Non
 
 
 def test_create_form_dependency_gate_skips_selector_on_no(monkeypatch: pytest.MonkeyPatch) -> None:
-    choices = iter(["p2", "m"])
+    choices = iter(["p2", "m", "unspecified"])
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
     monkeypatch.setattr(prompt_ui, "_prompt_yes_no", lambda *args, **kwargs: False)
     monkeypatch.setattr(
@@ -331,11 +331,12 @@ def test_create_form_dependency_gate_skips_selector_on_no(monkeypatch: pytest.Mo
         dependency_options=[("t-1", "Task 1")],
     )
     assert payload is not None
+    assert payload["spec_readiness"] == "unspecified"
     assert payload["depends_on"] == []
 
 
 def test_create_form_dependency_gate_runs_selector_on_yes(monkeypatch: pytest.MonkeyPatch) -> None:
-    choices = iter(["p2", "m"])
+    choices = iter(["p2", "m", "ready"])
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
     monkeypatch.setattr(prompt_ui, "_prompt_yes_no", lambda *args, **kwargs: True)
     monkeypatch.setattr(prompt_ui, "_prompt_depends_on_choice", lambda *args, **kwargs: ["t-1"])
@@ -346,11 +347,12 @@ def test_create_form_dependency_gate_runs_selector_on_yes(monkeypatch: pytest.Mo
         dependency_options=[("t-1", "Task 1")],
     )
     assert payload is not None
+    assert payload["spec_readiness"] == "ready"
     assert payload["depends_on"] == ["t-1"]
 
 
 def test_create_form_dependency_gate_skipped_when_no_candidates(monkeypatch: pytest.MonkeyPatch) -> None:
-    choices = iter(["p2", "m"])
+    choices = iter(["p2", "m", "unspecified"])
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
     monkeypatch.setattr(
         prompt_ui,
@@ -361,11 +363,12 @@ def test_create_form_dependency_gate_skipped_when_no_candidates(monkeypatch: pyt
 
     payload = prompt_ui.create_form(default_name="test-task", dependency_options=[])
     assert payload is not None
+    assert payload["spec_readiness"] == "unspecified"
     assert payload["depends_on"] == []
 
 
 def test_create_form_cancel_at_dependency_gate_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
-    choices = iter(["p2", "m"])
+    choices = iter(["p2", "m", "unspecified"])
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
     monkeypatch.setattr(prompt_ui, "_prompt_yes_no", lambda *args, **kwargs: None)
     monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: "")
@@ -609,7 +612,7 @@ def test_depends_on_choice_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_update_form_depends_on_uses_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    choices = iter(["__keep__", "__keep__"])
+    choices = iter(["__keep__", "__keep__", "__keep__"])
     captured: dict[str, object] = {}
 
     def _depends(title, options, default_values=None):
@@ -625,6 +628,7 @@ def test_update_form_depends_on_uses_defaults(monkeypatch: pytest.MonkeyPatch) -
     payload = prompt_ui.update_form(task, dependency_options=[("t-1", "Task 1"), ("t-2", "Task 2")])
     assert payload is not None
     assert captured["defaults"] == ["t-1"]
+    assert payload["spec_readiness"] is None
     assert payload["depends_on"] == ["t-2"]
     assert "note" not in payload
 
@@ -640,7 +644,7 @@ def test_create_form_cancel_on_text_field_returns_none(monkeypatch: pytest.Monke
 
 
 def test_update_form_cancel_on_text_field_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
-    choices = iter(["__keep__", "__keep__"])
+    choices = iter(["__keep__", "__keep__", "__keep__"])
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
     monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: None)
     assert prompt_ui.update_form(_task("alpha"), dependency_options=[]) is None

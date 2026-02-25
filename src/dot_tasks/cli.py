@@ -632,6 +632,7 @@ def create_cmd(
     task_name: Annotated[str | None, typer.Argument(help="Unique kebab-case task name")] = None,
     priority: Annotated[str, typer.Option("--priority")] = "p2",
     effort: Annotated[str, typer.Option("--effort")] = "m",
+    spec_readiness: Annotated[str, typer.Option("--spec-readiness")] = "unspecified",
     owner: Annotated[str | None, typer.Option("--owner")] = None,
     tag: Annotated[list[str], typer.Option("--tag", help="Can be repeated")] = [],
     depends_on: Annotated[list[str], typer.Option("--depends-on", help="Task name or task_id")] = [],
@@ -655,6 +656,7 @@ def create_cmd(
         name = task_name
         local_priority = priority
         local_effort = effort
+        local_spec_readiness = spec_readiness
         local_owner = owner
         local_tags = list(tag)
         local_depends = list(depends_on)
@@ -671,6 +673,7 @@ def create_cmd(
             name = form["task_name"]
             local_priority = form["priority"]
             local_effort = form["effort"]
+            local_spec_readiness = form.get("spec_readiness", "unspecified")
             local_owner = form["owner"]
             local_tags = form["tags"]
             local_depends = form["depends_on"]
@@ -684,6 +687,7 @@ def create_cmd(
             summary=local_summary,
             priority=local_priority,
             effort=local_effort,
+            spec_readiness=local_spec_readiness,
             owner=local_owner,
             tags=local_tags,
             depends_on=local_depends,
@@ -884,6 +888,7 @@ def update_cmd(
     task_name: Annotated[str | None, typer.Argument(help="Task name or task_id")] = None,
     priority: Annotated[str | None, typer.Option("--priority")] = None,
     effort: Annotated[str | None, typer.Option("--effort")] = None,
+    spec_readiness: Annotated[str | None, typer.Option("--spec-readiness")] = None,
     owner: Annotated[str | None, typer.Option("--owner")] = None,
     tag: Annotated[list[str], typer.Option("--tag")] = [],
     replace_tags: Annotated[bool, typer.Option("--replace-tags")] = False,
@@ -905,6 +910,7 @@ def update_cmd(
             [
                 priority is not None,
                 effort is not None,
+                spec_readiness is not None,
                 owner is not None,
                 bool(tag),
                 replace_tags,
@@ -923,6 +929,7 @@ def update_cmd(
 
         local_priority = priority
         local_effort = effort
+        local_spec_readiness = spec_readiness
         local_owner = owner
         local_tags = list(tag)
         local_depends = list(depends_on)
@@ -939,6 +946,7 @@ def update_cmd(
                 _exit_canceled(1)
             local_priority = form.get("priority")
             local_effort = form.get("effort")
+            local_spec_readiness = form.get("spec_readiness")
             local_owner = form.get("owner")
             local_tags = list(form.get("tags") or [])
             local_depends = list(form.get("depends_on") or [])
@@ -948,6 +956,7 @@ def update_cmd(
             selector,
             priority=local_priority,
             effort=local_effort,
+            spec_readiness=local_spec_readiness,
             owner=local_owner,
             tags=local_tags,
             replace_tags=replace_tags,

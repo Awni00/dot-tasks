@@ -10,6 +10,7 @@ import re
 VALID_STATUSES = ("todo", "doing", "completed")
 VALID_PRIORITIES = ("p0", "p1", "p2", "p3")
 VALID_EFFORTS = ("s", "m", "l", "xl")
+VALID_SPEC_READINESS = ("unspecified", "rough", "ready", "autonomous")
 TASK_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 STATUS_TO_DIR = {
@@ -30,6 +31,7 @@ class TaskMetadata:
     date_completed: str | None = None
     priority: str = "p2"
     effort: str = "m"
+    spec_readiness: str = "unspecified"
     depends_on: list[str] = field(default_factory=list)
     blocked_by: list[str] = field(default_factory=list)
     owner: str | None = None

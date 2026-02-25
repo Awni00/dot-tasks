@@ -62,6 +62,7 @@ def _task_list_row(task: Task, unmet_count: int) -> dict[str, str]:
         "status": task.metadata.status,
         "priority": task.metadata.priority,
         "effort": task.metadata.effort,
+        "spec_readiness": task.metadata.spec_readiness,
         "deps": _health_label(unmet_count),
         "created": task.metadata.date_created,
     }

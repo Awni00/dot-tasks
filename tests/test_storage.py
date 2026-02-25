@@ -225,6 +225,35 @@ def test_resolve_show_banner_reads_valid_bool(tmp_path: Path) -> None:
     assert storage.resolve_show_banner(root) is False
 
 
+def test_parse_task_backfills_missing_spec_readiness(tmp_path: Path) -> None:
+    task_dir = tmp_path / "todo" / "2026-02-24-legacy-task"
+    task_dir.mkdir(parents=True, exist_ok=True)
+    (task_dir / "task.md").write_text(
+        (
+            "---\n"
+            "task_id: t-20260224-001\n"
+            "task_name: legacy-task\n"
+            "status: todo\n"
+            "date_created: '2026-02-24'\n"
+            "date_started: null\n"
+            "date_completed: null\n"
+            "priority: p2\n"
+            "effort: m\n"
+            "depends_on: []\n"
+            "blocked_by: []\n"
+            "owner: null\n"
+            "tags: []\n"
+            "---\n\n"
+            "## Summary\n"
+            "- legacy\n"
+        ),
+        encoding="utf-8",
+    )
+
+    task = storage.parse_task(task_dir)
+    assert task.metadata.spec_readiness == "unspecified"
+
+
 def test_resolve_show_banner_invalid_warns_and_falls_back(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     _write_config(

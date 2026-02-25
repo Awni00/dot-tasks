@@ -68,6 +68,16 @@ def test_render_task_list_plain_applies_truncation() -> None:
     assert "2026-02-22" in output
 
 
+def test_render_task_list_plain_supports_spec_readiness_column() -> None:
+    tasks = [_task("alpha", "todo", "p2", "t-20260222-001", "2026-02-22")]
+    unmet = {"t-20260222-001": 0}
+    columns = _columns(("task_name", 16), ("spec_readiness", 14))
+
+    output = render.render_task_list_plain(tasks, unmet, columns)
+    assert "spec_readiness" in output
+    assert "unspecified" in output
+
+
 def test_render_task_list_rich_sections_and_labels() -> None:
     pytest.importorskip("rich")
     from rich.console import Console

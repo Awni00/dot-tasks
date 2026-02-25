@@ -580,6 +580,27 @@ def test_create_writes_task_and_activity(tmp_path: Path) -> None:
     assert meta["task_name"] == "write-files"
     assert meta["priority"] == "p1"
     assert meta["effort"] == "l"
+    assert meta["spec_readiness"] == "unspecified"
+
+
+def test_create_accepts_spec_readiness(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    result = runner.invoke(
+        app,
+        [
+            "create",
+            "spec-ready-task",
+            "--spec-readiness",
+            "ready",
+            "--tasks-root",
+            str(root),
+        ],
+    )
+    assert result.exit_code == 0
+    task_dir = _task_dir(root, "todo", "spec-ready-task")
+    meta, _ = _read_task_md(task_dir / "task.md")
+    assert meta["spec_readiness"] == "ready"
 
 
 def test_start_blocks_unmet_dependencies_without_force(tmp_path: Path) -> None:
@@ -1381,6 +1402,27 @@ def test_update_metadata_appends_default_activity_note(tmp_path: Path) -> None:
     activity_lines = _read_activity_lines(_task_dir(root, "todo", "update-default-note") / "activity.md")
     assert len(activity_lines) >= 2
     assert "| human | update | Task metadata updated" in activity_lines[-1]
+
+
+def test_update_accepts_spec_readiness(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "update-spec-readiness", "--tasks-root", str(root)])
+
+    result = runner.invoke(
+        app,
+        [
+            "update",
+            "update-spec-readiness",
+            "--spec-readiness",
+            "autonomous",
+            "--tasks-root",
+            str(root),
+        ],
+    )
+    assert result.exit_code == 0
+    meta, _ = _read_task_md(_task_dir(root, "todo", "update-spec-readiness") / "task.md")
+    assert meta["spec_readiness"] == "autonomous"
 
 
 def test_update_note_option_removed(tmp_path: Path) -> None:
