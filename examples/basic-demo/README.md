@@ -148,6 +148,7 @@ Expected snippet:
 
 ```text
 Created: prepare-release-notes (t-<YYYYMMDD>-<NNN>)
+links: dir | task.md
 Renamed: prepare-v1-release-notes
 Moved to trash: prepare-v1-release-notes
 ```

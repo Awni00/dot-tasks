@@ -268,6 +268,87 @@ def test_render_task_detail_rich_header_first_layout(tmp_path: Path) -> None:
     assert "## Summary" in text
 
 
+def test_render_create_success_plain_with_links(tmp_path: Path) -> None:
+    task_dir = tmp_path / "create-task"
+    task_dir.mkdir()
+    task = Task(
+        metadata=TaskMetadata(
+            task_id="t-20260225-001",
+            task_name="create-task",
+            status="todo",
+            date_created="2026-02-25",
+            priority="p2",
+            effort="m",
+        ),
+        body="",
+        task_dir=task_dir,
+    )
+
+    raw_output = render.render_create_success_plain(task, enable_links=True)
+    output = _strip_osc8(raw_output)
+
+    assert "\x1b]8;;" in raw_output
+    assert "Created: create-task (t-20260225-001)" in output
+    assert "links: dir | task.md" in output
+    assert str(task_dir.resolve()) not in output
+    assert str(task.task_md_path.resolve()) not in output
+
+
+def test_render_create_success_plain_without_links(tmp_path: Path) -> None:
+    task_dir = tmp_path / "create-task"
+    task_dir.mkdir()
+    task = Task(
+        metadata=TaskMetadata(
+            task_id="t-20260225-001",
+            task_name="create-task",
+            status="todo",
+            date_created="2026-02-25",
+            priority="p2",
+            effort="m",
+        ),
+        body="",
+        task_dir=task_dir,
+    )
+
+    output = render.render_create_success_plain(task, enable_links=False)
+
+    assert "\x1b]8;;" not in output
+    assert "Created: create-task (t-20260225-001)" in output
+    assert "links: dir | task.md" in output
+    assert str(task_dir.resolve()) not in output
+    assert str(task.task_md_path.resolve()) not in output
+
+
+def test_render_create_success_rich(tmp_path: Path) -> None:
+    pytest.importorskip("rich")
+    from rich.console import Console
+
+    task_dir = tmp_path / "create-task"
+    task_dir.mkdir()
+    task = Task(
+        metadata=TaskMetadata(
+            task_id="t-20260225-001",
+            task_name="create-task",
+            status="todo",
+            date_created="2026-02-25",
+            priority="p2",
+            effort="m",
+        ),
+        body="",
+        task_dir=task_dir,
+    )
+
+    renderable = render.render_create_success_rich(task)
+    console = Console(record=True, width=240, force_terminal=False, color_system=None)
+    console.print(renderable)
+    text = console.export_text()
+
+    assert "Created: create-task (t-20260225-001)" in text
+    assert "links: dir | task.md" in text
+    assert str(task_dir.resolve()) not in text
+    assert str(task.task_md_path.resolve()) not in text
+
+
 def test_render_tag_counts_plain_with_status_breakdown() -> None:
     rows = [
         {"tag": "backend", "total": 3, "todo": 1, "doing": 1, "done": 1},

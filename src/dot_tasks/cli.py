@@ -692,7 +692,10 @@ def create_cmd(
             tags=local_tags,
             depends_on=local_depends,
         )
-        typer.echo(f"Created: {task.metadata.task_name} ({task.metadata.task_id})")
+        if _can_render_rich_detail_output():
+            _print_rich(render.render_create_success_rich(task))
+        else:
+            typer.echo(render.render_create_success_plain(task, enable_links=_can_interact()))
 
     _run_and_handle(_inner)
 

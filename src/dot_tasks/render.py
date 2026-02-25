@@ -458,6 +458,33 @@ def render_task_detail_rich(
     )
 
 
+def render_create_success_plain(task: Task, *, enable_links: bool = True) -> str:
+    task_dir = task.task_dir.resolve()
+    task_md = task.task_md_path.resolve()
+    dir_text = _plain_link(task_dir, "dir") if enable_links else "dir"
+    task_md_text = _plain_link(task_md, "task.md") if enable_links else "task.md"
+    lines = [
+        f"Created: {task.metadata.task_name} ({task.metadata.task_id})",
+        f"links: {dir_text} | {task_md_text}",
+    ]
+    return "\n".join(lines)
+
+
+def render_create_success_rich(task: Task):
+    from rich.console import Group
+    from rich.text import Text
+
+    task_dir = task.task_dir.resolve()
+    task_md = task.task_md_path.resolve()
+
+    created_line = Text(f"Created: {task.metadata.task_name} ({task.metadata.task_id})")
+    links_line = Text("links: ")
+    links_line.append_text(_rich_link(task_dir, "dir"))
+    links_line.append(" | ")
+    links_line.append_text(_rich_link(task_md, "task.md"))
+    return Group(created_line, links_line)
+
+
 def render_task_detail_json(task: Task, dependency_rows: list[tuple[str, str, str]]) -> str:
     payload = {
         "metadata": asdict(task.metadata),

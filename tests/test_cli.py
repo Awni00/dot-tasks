@@ -619,6 +619,88 @@ def test_create_accepts_spec_readiness(tmp_path: Path) -> None:
     assert meta["spec_readiness"] == "ready"
 
 
+def test_create_non_tty_uses_plain_renderer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+
+    monkeypatch.setattr("dot_tasks.cli._can_render_rich_detail_output", lambda: False)
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: False)
+    monkeypatch.setattr(
+        "dot_tasks.cli.render.render_create_success_plain",
+        lambda task, *, enable_links=True: f"PLAIN-CREATE links={enable_links}",
+    )
+    monkeypatch.setattr(
+        "dot_tasks.cli.render.render_create_success_rich",
+        lambda task: pytest.fail("rich create renderer should not run"),
+    )
+
+    result = runner.invoke(app, ["create", "plain-create", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert "PLAIN-CREATE links=False" in result.output
+
+
+def test_create_tty_uses_rich_renderer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+
+    monkeypatch.setattr("dot_tasks.cli._can_render_rich_detail_output", lambda: True)
+    monkeypatch.setattr(
+        "dot_tasks.cli.render.render_create_success_rich",
+        lambda task: "RICH-CREATE",
+    )
+    captured: list[object] = []
+    monkeypatch.setattr("dot_tasks.cli._print_rich", lambda renderable: captured.append(renderable))
+
+    result = runner.invoke(app, ["create", "rich-create", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert captured == ["RICH-CREATE"]
+
+
+def test_create_plain_interactive_output_has_osc8_links(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+
+    monkeypatch.setattr("dot_tasks.cli._can_render_rich_detail_output", lambda: False)
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+
+    result = runner.invoke(app, ["create", "plain-link-create", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert "\x1b]8;;" in result.output
+
+    output = _strip_osc8(result.output)
+    task_dir = _task_dir(root, "todo", "plain-link-create").resolve()
+    assert f"Created: plain-link-create (" in output
+    assert "links: dir | task.md" in output
+    assert str(task_dir) not in output
+    assert str(task_dir / "task.md") not in output
+
+
+def test_create_plain_noninteractive_output_has_no_osc8_links(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+
+    monkeypatch.setattr("dot_tasks.cli._can_render_rich_detail_output", lambda: False)
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: False)
+
+    result = runner.invoke(app, ["create", "plain-no-link-create", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert "\x1b]8;;" not in result.output
+
+    task_dir = _task_dir(root, "todo", "plain-no-link-create").resolve()
+    assert f"Created: plain-no-link-create (" in result.output
+    assert "links: dir | task.md" in result.output
+    assert str(task_dir) not in result.output
+    assert str(task_dir / "task.md") not in result.output
+    assert (task_dir / "task.md").exists()
+    assert (task_dir / "activity.md").exists()
+
+
 def test_start_blocks_unmet_dependencies_without_force(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
