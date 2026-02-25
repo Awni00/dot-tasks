@@ -1579,6 +1579,42 @@ def test_update_dependency_options_show_status_and_use_list_order(
     ]
 
 
+def test_update_interactive_form_preserves_dependencies_when_not_replacing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "dep-a", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "dep-b", "--tasks-root", str(root)])
+    runner.invoke(
+        app,
+        ["create", "main-task", "--depends-on", "dep-a", "--tasks-root", str(root)],
+    )
+
+    dep_a_meta, _ = _read_task_md(_task_dir(root, "todo", "dep-a") / "task.md")
+    dep_a_id = dep_a_meta["task_id"]
+
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr(
+        "dot_tasks.cli.update_form",
+        lambda task, dependency_options, tag_options: {
+            "priority": None,
+            "effort": None,
+            "spec_readiness": None,
+            "owner": task.metadata.owner or "",
+            "tags": task.metadata.tags,
+            "depends_on": [],
+            "replace_depends_on": False,
+        },
+    )
+
+    result = runner.invoke(app, ["update", "main-task", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    meta, _ = _read_task_md(_task_dir(root, "todo", "main-task") / "task.md")
+    assert meta["depends_on"] == [dep_a_id]
+
+
 def test_update_metadata_appends_default_activity_note(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])

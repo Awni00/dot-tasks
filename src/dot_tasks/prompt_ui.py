@@ -533,13 +533,22 @@ def update_form(
     tags = _prompt_tags(available_tags, default_values=task.metadata.tags)
     if tags is None:
         return None
-    depends_on = _prompt_depends_on_choice(
-        "depends_on selectors (replaces current selection)",
-        dep_options,
-        default_values=task.metadata.depends_on,
-    )
-    if depends_on is None:
-        return None
+    replace_depends_on = False
+    depends_on: list[str] = []
+    if dep_options:
+        should_update_depends = _prompt_yes_no("Update task dependencies?", default=False)
+        if should_update_depends is None:
+            return None
+        if should_update_depends:
+            selected_depends = _prompt_depends_on_choice(
+                "depends_on selectors (replaces current selection)",
+                dep_options,
+                default_values=task.metadata.depends_on,
+            )
+            if selected_depends is None:
+                return None
+            depends_on = selected_depends
+            replace_depends_on = True
     return {
         "priority": None if priority == "__keep__" else priority,
         "effort": None if effort == "__keep__" else effort,
@@ -547,5 +556,5 @@ def update_form(
         "owner": owner,
         "tags": tags,
         "depends_on": depends_on,
-        "replace_depends_on": True,
+        "replace_depends_on": replace_depends_on,
     }

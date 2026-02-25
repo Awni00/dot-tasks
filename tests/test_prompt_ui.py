@@ -696,6 +696,7 @@ def test_update_form_depends_on_uses_defaults(monkeypatch: pytest.MonkeyPatch) -
     task.metadata.depends_on = ["t-1"]
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
     monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: "")
+    monkeypatch.setattr(prompt_ui, "_prompt_yes_no", lambda *args, **kwargs: True)
     monkeypatch.setattr(prompt_ui, "_prompt_depends_on_choice", _depends)
 
     payload = prompt_ui.update_form(task, dependency_options=[("t-1", "Task 1"), ("t-2", "Task 2")])
@@ -703,7 +704,61 @@ def test_update_form_depends_on_uses_defaults(monkeypatch: pytest.MonkeyPatch) -
     assert captured["defaults"] == ["t-1"]
     assert payload["spec_readiness"] is None
     assert payload["depends_on"] == ["t-2"]
+    assert payload["replace_depends_on"] is True
     assert "note" not in payload
+
+
+def test_update_form_dependency_gate_no_skips_selector(monkeypatch: pytest.MonkeyPatch) -> None:
+    choices = iter(["__keep__", "__keep__", "__keep__"])
+    task = _task("alpha")
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: "")
+    monkeypatch.setattr(prompt_ui, "_prompt_tags", lambda *args, **kwargs: [])
+    monkeypatch.setattr(prompt_ui, "_prompt_yes_no", lambda *args, **kwargs: False)
+    monkeypatch.setattr(
+        prompt_ui,
+        "_prompt_depends_on_choice",
+        lambda *args, **kwargs: pytest.fail("depends_on selector should be skipped when gate is no"),
+    )
+
+    payload = prompt_ui.update_form(task, dependency_options=[("t-1", "Task 1")], tag_options=[])
+    assert payload is not None
+    assert payload["depends_on"] == []
+    assert payload["replace_depends_on"] is False
+
+
+def test_update_form_dependency_gate_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    choices = iter(["__keep__", "__keep__", "__keep__"])
+    task = _task("alpha")
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: "")
+    monkeypatch.setattr(prompt_ui, "_prompt_tags", lambda *args, **kwargs: [])
+    monkeypatch.setattr(prompt_ui, "_prompt_yes_no", lambda *args, **kwargs: None)
+
+    assert prompt_ui.update_form(task, dependency_options=[("t-1", "Task 1")], tag_options=[]) is None
+
+
+def test_update_form_no_dependency_options_skips_gate_and_selector(monkeypatch: pytest.MonkeyPatch) -> None:
+    choices = iter(["__keep__", "__keep__", "__keep__"])
+    task = _task("alpha")
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: "")
+    monkeypatch.setattr(prompt_ui, "_prompt_tags", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        prompt_ui,
+        "_prompt_yes_no",
+        lambda *args, **kwargs: pytest.fail("dependency gate should be skipped without options"),
+    )
+    monkeypatch.setattr(
+        prompt_ui,
+        "_prompt_depends_on_choice",
+        lambda *args, **kwargs: pytest.fail("depends_on selector should be skipped without options"),
+    )
+
+    payload = prompt_ui.update_form(task, dependency_options=[], tag_options=[])
+    assert payload is not None
+    assert payload["depends_on"] == []
+    assert payload["replace_depends_on"] is False
 
 
 def test_create_form_uses_prompt_tags_payload(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -731,7 +786,6 @@ def test_update_form_tag_prompt_uses_existing_defaults(monkeypatch: pytest.Monke
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
     monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: "")
     monkeypatch.setattr(prompt_ui, "_prompt_tags", _prompt_tags)
-    monkeypatch.setattr(prompt_ui, "_prompt_depends_on_choice", lambda *args, **kwargs: [])
 
     payload = prompt_ui.update_form(task, dependency_options=[], tag_options=[("backend", "backend")])
     assert payload is not None
