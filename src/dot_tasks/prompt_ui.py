@@ -441,9 +441,6 @@ def update_form(
     )
     if depends_on is None:
         return None
-    note = _safe_prompt("update note", default="Task metadata updated")
-    if note is None:
-        return None
     return {
         "priority": None if priority == "__keep__" else priority,
         "effort": None if effort == "__keep__" else effort,
@@ -451,5 +448,4 @@ def update_form(
         "tags": [t.strip() for t in tags.split(",") if t.strip()],
         "depends_on": depends_on,
         "replace_depends_on": True,
-        "note": note.strip(),
     }

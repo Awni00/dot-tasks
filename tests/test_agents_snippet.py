@@ -17,6 +17,8 @@ def test_load_task_management_snippet_has_detection_confirmation_and_create_trig
     assert "dot-tasks view <task_name_or_id> --json" in snippet
     assert "Confirm the tracking target with the user" in snippet
     assert "work is substantial (plan mode, likely multi-file, or >=30 minutes)" in snippet
+    assert "dot-tasks log-activity --note" in snippet
+    assert "dot-tasks update --note" not in snippet
 
 
 def test_resolve_agents_file_defaults_to_project_agents_md(tmp_path: Path) -> None:

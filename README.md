@@ -41,7 +41,7 @@ dot-tasks create rename-variables-for-vibes --summary "Refactor variable names f
 # Move the task from todo/ to doing/ and create its plan.md.
 dot-tasks start rename-variables-for-vibes
 # Append a progress note while work is in progress.
-dot-tasks update rename-variables-for-vibes --note "Replaced cryptic names with vibes-based naming"
+dot-tasks log-activity rename-variables-for-vibes --note "Replaced cryptic names with vibes-based naming"
 # Mark the task complete and move it to done/.
 dot-tasks complete rename-variables-for-vibes
 ```
@@ -69,7 +69,7 @@ Each task lives in `.tasks/<status-bucket>/<created-date>-<task_name>/` and cont
 | Make note of new to-do | Write down the task spec. Often I have an agent draft a spec from a rough note. | `dot-tasks create` | Creates task dir `.tasks/todo/<created-date>-<task_name>/` with `task.md`, `activity.md`|
 | Choose task to work on | Scan what is in `todo`/`doing` and pick the next task to start. | `dot-tasks list` | read-only inspection of `.tasks/` |
 | Start active work | Move the task to active status when implementation begins. | `dot-tasks start` | Move task from `.tasks/todo/` to `.tasks/doing/`; `plan.md` created |
-| Work loop | Log notable progress updates so humans and agents share context. | `dot-tasks update` | `task.md`, `activity.md` |
+| Work loop | Log notable progress updates so humans and agents share context. | `dot-tasks log-activity` | `activity.md` |
 | Finish and archive state | Mark done when acceptance criteria are met, preserving full history in files. | `dot-tasks complete` | task directory moves to `.tasks/done/`|
 
 ## Installation
@@ -122,7 +122,8 @@ uv pip install -e ".[dev]"
 | `list` | List tasks by status and optional tag filters (rich/plain/JSON depending on context). | `dot-tasks list [todo|doing|done] [--tag <tag> ...] [--json]` |
 | `tags` | Show task counts by tag with optional status filter (rich/plain/JSON depending on context). | `dot-tasks tags [todo|doing|done] [--sort count|name] [--json]` |
 | `view` | Show full details for one task, including clickable file links for `task.md`, `activity.md`, `plan.md`, and any extra files. | `dot-tasks view <task_name> [--json]` |
-| `update` | Update metadata, dependencies, tags, or add notes. | `dot-tasks update <task_name> ...` |
+| `update` | Update metadata, dependencies, tags, owner, effort, or priority. | `dot-tasks update <task_name> ...` |
+| `log-activity` | Append a manual activity note with optional actor override. | `dot-tasks log-activity <task_name> --note "..." [--actor agent]` |
 | `rename` | Rename a task. | `dot-tasks rename <task_name> <new_task_name>` |
 | `delete` | Move a task to `trash/`, or delete permanently with `--hard`. | `dot-tasks delete <task_name> [--hard]` |
 
@@ -144,7 +145,7 @@ Typical agent workflow:
 1. Capture or refine a task spec with `dot-tasks create`.
 2. If asked what to work on, check `dot-tasks list` (`todo`/`doing`) and propose the top few options with a short rationale.
 3. Move selected work into active state with `dot-tasks start`.
-4. Log meaningful progress with `dot-tasks update --note ...` as work evolves.
+4. Log meaningful progress with `dot-tasks log-activity --note ...` as work evolves.
 5. Close the loop with `dot-tasks complete` when acceptance criteria are met.
 
 You can set up agent integration pieces either during `dot-tasks init` or with standalone commands:

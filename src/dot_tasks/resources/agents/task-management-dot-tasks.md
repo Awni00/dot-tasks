@@ -14,7 +14,7 @@ Default workflow:
    - Otherwise run `dot-tasks list --json`, then inspect likely matches with `dot-tasks view <task_name_or_id> --json`.
 3. Confirm the tracking target with the user before binding work to a task.
 4. If no match and work is substantial (plan mode, likely multi-file, or >=30 minutes), ask whether to create a new task.
-5. Once bound: `dot-tasks start`, `dot-tasks update --note`, `dot-tasks complete`.
+5. Once bound: `dot-tasks start`, `dot-tasks log-activity --note`, `dot-tasks complete`.
 
 Guardrails:
 

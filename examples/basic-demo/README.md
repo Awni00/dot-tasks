@@ -107,16 +107,18 @@ Expected snippet:
 Started: build-nightly-report
 ```
 
-## Update Demo
+## Update + Activity Demo
 
 ```bash
-dot-tasks update build-nightly-report --priority p0 --effort l --note "Escalated after dependency bypass"
+dot-tasks update build-nightly-report --priority p0 --effort l
+dot-tasks log-activity build-nightly-report --note "Escalated after dependency bypass"
 ```
 
 Expected snippet:
 
 ```text
 Updated: build-nightly-report
+Logged activity: build-nightly-report
 ```
 
 ## Complete Demo

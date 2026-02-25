@@ -889,11 +889,10 @@ def update_cmd(
     replace_tags: Annotated[bool, typer.Option("--replace-tags")] = False,
     depends_on: Annotated[list[str], typer.Option("--depends-on")] = [],
     clear_depends_on: Annotated[bool, typer.Option("--clear-depends-on")] = False,
-    note: Annotated[str | None, typer.Option("--note")] = None,
     nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
 ) -> None:
-    """Update task metadata and append activity."""
+    """Update task metadata."""
 
     def _inner() -> None:
         svc = _service(tasks_root)
@@ -911,7 +910,6 @@ def update_cmd(
                 replace_tags,
                 bool(depends_on),
                 clear_depends_on,
-                note is not None,
             ]
         )
 
@@ -929,7 +927,6 @@ def update_cmd(
         local_tags = list(tag)
         local_depends = list(depends_on)
         local_replace_depends = clear_depends_on
-        local_note = note
 
         open_form = _can_prompt(interactive_enabled) and (task_name is None or not has_edit_flags)
         if open_form:
@@ -946,7 +943,6 @@ def update_cmd(
             local_tags = list(form.get("tags") or [])
             local_depends = list(form.get("depends_on") or [])
             local_replace_depends = bool(form.get("replace_depends_on"))
-            local_note = form.get("note")
 
         task = svc.update_task(
             selector,
@@ -957,9 +953,43 @@ def update_cmd(
             replace_tags=replace_tags,
             depends_on=local_depends,
             clear_depends_on=clear_depends_on or local_replace_depends,
-            note=local_note,
         )
         typer.echo(f"Updated: {task.metadata.task_name}")
+
+    _run_and_handle(_inner)
+
+
+@app.command("log-activity")
+def log_activity_cmd(
+    task_name: Annotated[str | None, typer.Argument(help="Task name or task_id")] = None,
+    note: Annotated[str | None, typer.Option("--note")] = None,
+    actor: Annotated[str, typer.Option("--actor")] = "unknown",
+    nointeractive: NoInteractiveOption = False,
+    tasks_root: TasksRootOption = None,
+) -> None:
+    """Append a manual activity note."""
+
+    def _inner() -> None:
+        svc = _service(tasks_root)
+        interactive_enabled = _resolve_interactive_enabled(
+            svc.tasks_root,
+            nointeractive=nointeractive,
+        )
+        selector = _select_task_if_missing(
+            svc,
+            task_name,
+            "Select a task to log activity",
+            interactive_enabled=interactive_enabled,
+        )
+
+        local_note = note
+        if local_note is None:
+            if not _can_prompt(interactive_enabled):
+                raise TaskValidationError("note is required in non-interactive mode")
+            local_note = typer.prompt("note")
+
+        task = svc.log_activity(selector, local_note, actor=actor)
+        typer.echo(f"Logged activity: {task.metadata.task_name}")
 
     _run_and_handle(_inner)
 

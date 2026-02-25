@@ -382,7 +382,6 @@ class TaskService:
         replace_tags: bool = False,
         depends_on: Iterable[str] | None = None,
         clear_depends_on: bool = False,
-        note: str | None = None,
     ) -> Task:
         task = self._find_by_selector(selector, include_trash=False)
 
@@ -410,7 +409,18 @@ class TaskService:
 
         snapshot = self._snapshot_with(task)
         self._validate_and_persist_snapshot(snapshot)
-        storage.append_activity(task, "human", "update", note or "Task metadata updated")
+        storage.append_activity(task, "human", "update", "Task metadata updated")
+        return self._find_by_selector(task.metadata.task_id)
+
+    def log_activity(self, selector: str, note: str, actor: str = "unknown") -> Task:
+        task = self._find_by_selector(selector, include_trash=False)
+
+        cleaned_note = note.strip()
+        if not cleaned_note:
+            raise TaskValidationError("note is required")
+
+        cleaned_actor = actor.strip() or "unknown"
+        storage.append_activity(task, cleaned_actor, "update", cleaned_note)
         return self._find_by_selector(task.metadata.task_id)
 
     def rename_task(self, selector: str, new_task_name: str) -> Task:

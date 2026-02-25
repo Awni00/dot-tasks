@@ -626,6 +626,7 @@ def test_update_form_depends_on_uses_defaults(monkeypatch: pytest.MonkeyPatch) -
     assert payload is not None
     assert captured["defaults"] == ["t-1"]
     assert payload["depends_on"] == ["t-2"]
+    assert "note" not in payload
 
 
 def test_yes_no_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:

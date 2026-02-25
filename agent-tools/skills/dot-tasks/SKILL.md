@@ -23,7 +23,7 @@ Use this skill whenever a repository uses `dot-tasks` for task lifecycle trackin
 3. Confirm with the user whether a candidate task matches and whether tracking should bind to it.
 4. If no task matches and work is substantial (plan mode, likely multi-file, or >=30 minutes), ask whether to create a new task.
 5. If work is quick/simple, do not force task creation unless the user asks.
-6. Once tracking is bound, run: `start` -> `update --note` -> `complete`.
+6. Once tracking is bound, run: `start` -> `log-activity --note` -> `complete`.
 
 ## Commands
 
@@ -40,7 +40,8 @@ dot-tasks tags [todo|doing|done] --json                    # tag counts/triage
 # lifecycle
 dot-tasks create <task_name> --summary "..." --priority [p1|p2|p3|p4] --effort [s|m|l|xl] --tag <tag>
 dot-tasks start <task_name_or_id>                          # move to doing + create plan.md
-dot-tasks update <task_name_or_id> --note "Progress note"  # add a progress note
+dot-tasks update <task_name_or_id> --priority p1 --effort m --tag backend
+dot-tasks log-activity <task_name_or_id> --note "Progress note" [--actor agent]
 dot-tasks complete <task_name_or_id>                       # move to done
 
 # maintenance

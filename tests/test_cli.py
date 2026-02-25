@@ -46,6 +46,10 @@ def _read_config(path: Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
+def _read_activity_lines(path: Path) -> list[str]:
+    return path.read_text(encoding="utf-8").splitlines()
+
+
 def _strip_osc8(text: str) -> str:
     return OSC8_LINK_RE.sub(r"\1", text)
 
@@ -1355,7 +1359,6 @@ def test_update_interactive_form_replaces_dependencies(
             "tags": [],
             "depends_on": [dep_b_id],
             "replace_depends_on": True,
-            "note": "Replaced deps",
         },
     )
 
@@ -1363,6 +1366,115 @@ def test_update_interactive_form_replaces_dependencies(
     assert result.exit_code == 0
     meta, _ = _read_task_md(_task_dir(root, "todo", "main-task") / "task.md")
     assert meta["depends_on"] == [dep_b_id]
+
+
+def test_update_metadata_appends_default_activity_note(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "update-default-note", "--tasks-root", str(root)])
+
+    result = runner.invoke(
+        app,
+        ["update", "update-default-note", "--priority", "p1", "--tasks-root", str(root)],
+    )
+    assert result.exit_code == 0
+    activity_lines = _read_activity_lines(_task_dir(root, "todo", "update-default-note") / "activity.md")
+    assert len(activity_lines) >= 2
+    assert "| human | update | Task metadata updated" in activity_lines[-1]
+
+
+def test_update_note_option_removed(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "update-no-note-option", "--tasks-root", str(root)])
+
+    result = runner.invoke(
+        app,
+        [
+            "update",
+            "update-no-note-option",
+            "--note",
+            "legacy note flag",
+            "--tasks-root",
+            str(root),
+        ],
+    )
+    assert result.exit_code == 2
+    assert "No such option: --note" in result.output
+
+
+def test_log_activity_defaults_actor_to_unknown(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "log-default-actor", "--tasks-root", str(root)])
+
+    result = runner.invoke(
+        app,
+        [
+            "log-activity",
+            "log-default-actor",
+            "--note",
+            "Progress from manual log",
+            "--tasks-root",
+            str(root),
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Logged activity: log-default-actor" in result.output
+    activity_lines = _read_activity_lines(_task_dir(root, "todo", "log-default-actor") / "activity.md")
+    assert "| unknown | update | Progress from manual log" in activity_lines[-1]
+
+
+def test_log_activity_uses_custom_actor(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "log-custom-actor", "--tasks-root", str(root)])
+
+    result = runner.invoke(
+        app,
+        [
+            "log-activity",
+            "log-custom-actor",
+            "--note",
+            "agent progress",
+            "--actor",
+            "agent",
+            "--tasks-root",
+            str(root),
+        ],
+    )
+    assert result.exit_code == 0
+    activity_lines = _read_activity_lines(_task_dir(root, "todo", "log-custom-actor") / "activity.md")
+    assert "| agent | update | agent progress" in activity_lines[-1]
+
+
+def test_log_activity_interactive_prompts_for_note(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "log-prompted-note", "--tasks-root", str(root)])
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr("dot_tasks.cli.typer.prompt", lambda message: "Prompted note")
+
+    result = runner.invoke(
+        app,
+        ["log-activity", "log-prompted-note", "--tasks-root", str(root)],
+    )
+    assert result.exit_code == 0
+    activity_lines = _read_activity_lines(_task_dir(root, "todo", "log-prompted-note") / "activity.md")
+    assert "| unknown | update | Prompted note" in activity_lines[-1]
+
+
+def test_log_activity_nointeractive_requires_note(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "log-missing-note", "--tasks-root", str(root)])
+
+    result = runner.invoke(
+        app,
+        ["log-activity", "log-missing-note", "--nointeractive", "--tasks-root", str(root)],
+    )
+    assert result.exit_code == 1
+    assert "Error: note is required in non-interactive mode" in result.output
 
 
 def test_create_interactive_cancel_prints_canceled_and_exits_1(
