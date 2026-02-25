@@ -7,6 +7,7 @@ date_started: null
 date_completed: null
 priority: p0
 effort: l
+spec_readiness: unspecified
 depends_on:
 - t-20260205-001
 blocked_by: []
@@ -15,6 +16,9 @@ tags:
 - reporting
 - automation
 ---
+
+
+
 
 ## Summary
 - Build nightly report generation using exported task snapshots.

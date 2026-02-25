@@ -7,6 +7,7 @@ date_started: null
 date_completed: null
 priority: p1
 effort: m
+spec_readiness: unspecified
 depends_on: []
 blocked_by:
 - t-20260206-001
@@ -15,6 +16,9 @@ tags:
 - api
 - export
 ---
+
+
+
 
 ## Summary
 - Add a JSON export mode for task listings.

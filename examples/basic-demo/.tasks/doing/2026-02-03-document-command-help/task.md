@@ -7,6 +7,7 @@ date_started: '2026-02-03'
 date_completed: null
 priority: p2
 effort: s
+spec_readiness: unspecified
 depends_on:
 - t-20260201-001
 blocked_by: []
@@ -15,6 +16,9 @@ tags:
 - docs
 - cli
 ---
+
+
+
 
 ## Summary
 - Improve CLI help text and examples for core commands.
