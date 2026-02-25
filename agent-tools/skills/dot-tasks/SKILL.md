@@ -23,7 +23,7 @@ Use this skill whenever a repository uses `dot-tasks` for task lifecycle trackin
 3. Confirm with the user whether a candidate task matches and whether tracking should bind to it.
 4. If no task matches and work is substantial (plan mode, likely multi-file, or >=30 minutes), ask whether to create a new task.
 5. If work is quick/simple, do not force task creation unless the user asks.
-6. Once tracking is bound, run: `start` -> `log-activity --note` -> `complete`.
+6. Once tracking is bound, run: `start` -> write implementation plan to `plan.md` -> `log-activity --note` during progress -> `complete` only when acceptance criteria are met.
 
 ## Commands
 
