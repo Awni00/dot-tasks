@@ -56,6 +56,7 @@ dot-tasks delete <task_name_or_id>                         # soft-delete to tras
 - Direct file edits are allowed for:
   1. `task.md` for writing task summary/specs after `dot-tasks create`.
   2. `plan.md` to keep implementation steps current after `dot-tasks start`.
+- In plan mode, after the plan is finalized and approved by the user, write the full plan you create to the bound task's `plan.md` (do not only write a summary or partial plan).
 - Do not rewrite `activity.md` history; append only.
 - Respect dependency checks.
 - Use `dot-tasks rename` for renames (never manual folder edits).
