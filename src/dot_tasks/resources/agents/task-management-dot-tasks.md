@@ -8,18 +8,20 @@
 
 Default workflow:
 
-1. If `.tasks/` is missing, run `dot-tasks init` (or ask before initializing).
-2. Check existing tasks first:
-   - Fast path: if user provides `task_name`/`task_id`, run `dot-tasks view <task_name_or_id> --json`.
-   - Otherwise run `dot-tasks list --json`, then inspect likely matches with `dot-tasks view <task_name_or_id> --json`.
-3. Confirm the tracking target with the user before binding work to a task.
-4. If no match and work is substantial (plan mode, likely multi-file, or >=30 minutes), ask whether to create a new task.
-5. Once bound: `dot-tasks start`, write implementation plan to `plan.md`, `dot-tasks log-activity --note`, `dot-tasks complete`.
+Use `dot-tasks` for non-trivial work tracked in `.tasks/`.
+
+Trigger the `dot-tasks` skill when:
+1. User asks what to work on next.
+2. User asks to begin/resume an existing task.
+3. User asks for significant new work (create and bind a task).
+
+The skill is the source of truth for workflow details (triage, readiness checks, clarification flow, and lifecycle execution).
 
 Guardrails:
+- Prefer `dot-tasks` commands over manual `.tasks/` edits.
+- Confirm task binding with the user before tracked execution.
+- Keep `activity.md` append-only.
+- Use `dot-tasks rename/delete` for maintenance operations.
 
-- Avoid silent auto-binding on fuzzy matches.
-- In plan mode, after the plan is finalized and approved by the user, write the full plan to the bound task's `plan.md` (do not only write a summary or partial plan).
-- Do not rewrite `activity.md` history; append only.
-- Use `dot-tasks rename` and `dot-tasks delete` rather than manual folder edits.
+Lifecycle (high-level): `create -> start -> log-activity -> complete`.
 <!-- dot-tasks:end task-management -->

@@ -11,19 +11,61 @@ Use this skill whenever a repository uses `dot-tasks` for task lifecycle trackin
 
 ## When To Use
 
-- For substantial or multi-file work, use `dot-tasks` as the tracking source of truth.
-- If the user asks what to work on next, use `dot-tasks` task state as the source of truth.
+- Use this skill when the user asks for task suggestions based on existing `dot-tasks` state.
+- Use this skill when the user asks to begin or resume work on an existing task.
+- Use this skill when the user asks for significant new work that should likely be tracked.
 
-## Default Agent Loop
+## Workflow 1: Suggest What To Work On Next
 
-1. Ensure `.tasks/` exists; if missing, run `dot-tasks init` (or ask permission before initializing).
-2. Detect existing tasks first:
-   - Fast path: if user gives a known `task_name`/`task_id`, run `dot-tasks view <task_name_or_id> --json`.
-   - Otherwise run `dot-tasks list --json`, shortlist likely matches, and inspect candidates with `dot-tasks view <task_name_or_id> --json`.
-3. Confirm with the user whether a candidate task matches and whether tracking should bind to it.
-4. If no task matches and work is substantial (plan mode, likely multi-file, or >=30 minutes), ask whether to create a new task.
-5. If work is quick/simple, do not force task creation unless the user asks.
-6. Once tracking is bound, run: `start` -> write implementation plan to `plan.md` -> `log-activity --note` during progress -> `complete` only when acceptance criteria are met.
+1. Discover candidate work:
+   - Run `dot-tasks list todo --json` (or `dot-tasks list --json` if status is not specified).
+   - Inspect likely top candidates with `dot-tasks view <task_name_or_id> --json`.
+2. Rank candidates using this rubric:
+   - Higher priority first (`p1` before `p2`, etc).
+   - Prefer unblocked tasks (`dependency_health: ready`) over blocked work.
+   - Prefer tasks with clearer specs (`ready`/`autonomous`) when execution should start immediately.
+   - Break ties with effort (`s`/`m` for quick wins, unless user asked for larger work).
+3. Return the top few options with one-line rationale each.
+4. If high-priority work is blocked, call that out explicitly and include:
+   - A short unblock path for the blocked item.
+   - A suggested unblocked fallback task.
+
+## Workflow 2: Begin Or Resume Existing Task
+
+1. Resolve the target task:
+   - If the user provides `task_name`/`task_id`, run `dot-tasks view <task_name_or_id> --json`.
+   - If ambiguous, list likely matches and confirm the target with the user before binding.
+2. Branch by task status:
+   - `doing`: resume by reading `plan.md` and recent `activity.md`, then continue from the latest checkpoint.
+   - `todo`: run readiness checks before starting.
+   - `done`: do not silently restart; ask whether to create a follow-up task or reopen scope explicitly.
+3. Apply readiness gate before execution:
+   - `spec_readiness` `unspecified`/`rough`: clarify high-level intent before starting.
+   - `spec_readiness` `ready`/`autonomous`: plan lower-level implementation details.
+4. If intent is unclear, ask open-ended questions in two stages:
+   - Stage 1: high-level intent, scope, desired outcome.
+   - Stage 2: implementation constraints, edge cases, acceptance criteria.
+5. Do not proceed on unstated assumptions when high-level intent is unclear.
+
+## Workflow 3: Significant New Work
+
+1. Detect whether the request is substantial (multi-file, plan-heavy, or likely >=30 minutes).
+2. If substantial, ask whether to create and bind a new `dot-tasks` task.
+3. If the user agrees:
+   - Create task with `dot-tasks create ...` (include summary and basic metadata).
+   - Confirm the tracking target and bind work to that task.
+4. If work is quick/simple, do not force task creation unless the user asks.
+
+## Shared Task Lifecycle Loop
+
+For tracked task execution (regardless of how it was triggered), follow:
+`create -> start -> plan -> log-activity -> complete`
+
+- Start active execution with `dot-tasks start`.
+- Keep `plan.md` current as implementation decisions become concrete.
+- Log meaningful progress with `dot-tasks log-activity --note`.
+- Use `dot-tasks update` for mid-flight metadata/scope/priority changes.
+- Before `dot-tasks complete`, confirm acceptance criteria are satisfied.
 
 ## Commands
 
@@ -49,19 +91,17 @@ dot-tasks rename <task_name_or_id> <new_task_name>         # rename task
 dot-tasks delete <task_name_or_id>                         # soft-delete to trash
 ```
 
-## Working Rules
+## Guardrails
 
 - Prefer `dot-tasks` commands over direct edits to task state files.
-- Avoid silent auto-binding on fuzzy matches; confirm task binding with the user.
+- Avoid silent auto-binding on fuzzy matches.
+- Confirm task binding with the user before tracked execution.
 - Direct file edits are allowed for:
   1. `task.md` for writing task summary/specs after `dot-tasks create`.
   2. `plan.md` to keep implementation steps current after `dot-tasks start`.
-- In plan mode, after the plan is finalized and approved by the user, write the full plan you create to the bound task's `plan.md` (do not only write a summary or partial plan).
+- In plan mode, after the plan is finalized and approved by the user, write the full plan to the bound task's `plan.md`.
 - Do not rewrite `activity.md` history; append only.
 - Respect dependency checks.
-- Use `dot-tasks rename` for renames (never manual folder edits).
-- Use `dot-tasks delete` for deletion (soft-delete moves to trash/ by default).
-
 
 ## Data Contract
 
