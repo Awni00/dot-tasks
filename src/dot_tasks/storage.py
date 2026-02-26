@@ -403,7 +403,7 @@ def render_frontmatter(data: dict[str, Any], body: str) -> str:
         if key in data:
             ordered[key] = data[key]
     dumped = yaml.safe_dump(ordered, sort_keys=False, default_flow_style=False).strip()
-    body = body.rstrip() + "\n"
+    body = body.lstrip("\n").rstrip() + "\n"
     return f"---\n{dumped}\n---\n\n{body}"
 
 

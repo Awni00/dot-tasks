@@ -70,6 +70,10 @@ def _strip_osc8(text: str) -> str:
     return OSC8_LINK_RE.sub(r"\1", text)
 
 
+def _leading_newline_count(text: str) -> int:
+    return len(text) - len(text.lstrip("\n"))
+
+
 def test_init_idempotent(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     r1 = runner.invoke(app, ["init", "--tasks-root", str(root)])
@@ -735,6 +739,54 @@ def test_complete_moves_and_sets_date(tmp_path: Path) -> None:
     meta, _ = _read_task_md(done_dir / "task.md")
     assert meta["status"] == "completed"
     assert meta["date_completed"] == dt.date.today().isoformat()
+
+
+def test_task_body_whitespace_is_stable_across_lifecycle_writes(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "whitespace-stability", "--tasks-root", str(root)])
+
+    _, body_created = _read_task_md(_task_md_path(root, "todo", "whitespace-stability"))
+    assert _leading_newline_count(body_created) == 1
+
+    runner.invoke(
+        app,
+        ["update", "whitespace-stability", "--priority", "p1", "--tasks-root", str(root)],
+    )
+    _, body_update_one = _read_task_md(_task_md_path(root, "todo", "whitespace-stability"))
+    assert _leading_newline_count(body_update_one) == 1
+
+    runner.invoke(
+        app,
+        ["update", "whitespace-stability", "--effort", "l", "--tasks-root", str(root)],
+    )
+    _, body_update_two = _read_task_md(_task_md_path(root, "todo", "whitespace-stability"))
+    assert _leading_newline_count(body_update_two) == 1
+
+    runner.invoke(app, ["start", "whitespace-stability", "--tasks-root", str(root)])
+    _, body_started = _read_task_md(_task_md_path(root, "doing", "whitespace-stability"))
+    assert _leading_newline_count(body_started) == 1
+
+    runner.invoke(app, ["complete", "whitespace-stability", "--tasks-root", str(root)])
+    _, body_completed = _read_task_md(_task_md_path(root, "done", "whitespace-stability"))
+    assert _leading_newline_count(body_completed) == 1
+
+
+def test_update_task_does_not_increase_leading_body_newlines_for_other_tasks(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "task-a", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "task-b", "--tasks-root", str(root)])
+
+    _, body_before = _read_task_md(_task_md_path(root, "todo", "task-b"))
+    before_count = _leading_newline_count(body_before)
+
+    runner.invoke(app, ["update", "task-a", "--priority", "p1", "--tasks-root", str(root)])
+
+    _, body_after = _read_task_md(_task_md_path(root, "todo", "task-b"))
+    after_count = _leading_newline_count(body_after)
+    assert before_count == 1
+    assert after_count == 1
 
 
 def test_rename_preserves_dependencies_by_task_id(tmp_path: Path) -> None:

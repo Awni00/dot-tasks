@@ -254,6 +254,48 @@ def test_parse_task_backfills_missing_spec_readiness(tmp_path: Path) -> None:
     assert task.metadata.spec_readiness == "unspecified"
 
 
+def _leading_newline_count(text: str) -> int:
+    return len(text) - len(text.lstrip("\n"))
+
+
+def test_render_frontmatter_roundtrip_does_not_accumulate_leading_newlines() -> None:
+    metadata = {
+        "task_id": "t-20260226-001",
+        "task_name": "roundtrip-stability",
+        "status": "todo",
+        "date_created": "2026-02-26",
+        "date_started": None,
+        "date_completed": None,
+        "priority": "p2",
+        "effort": "m",
+        "spec_readiness": "unspecified",
+        "depends_on": [],
+        "blocked_by": [],
+        "owner": None,
+        "tags": [],
+    }
+    body = "## Summary\n- demo\n\n## Acceptance Criteria\n- TODO\n"
+    counts: list[int] = []
+
+    for _ in range(5):
+        text = storage.render_frontmatter(metadata, body)
+        _, body = storage.split_frontmatter(text)
+        counts.append(_leading_newline_count(body))
+
+    assert counts == [1, 1, 1, 1, 1]
+
+
+def test_render_frontmatter_strips_extra_leading_blank_lines() -> None:
+    metadata = {"task_id": "t-20260226-002"}
+    body = "\n\n\n## Summary\n- demo\n\n## Acceptance Criteria\n- TODO\n\n"
+
+    text = storage.render_frontmatter(metadata, body)
+    _, parsed_body = storage.split_frontmatter(text)
+
+    assert parsed_body.startswith("\n## Summary\n")
+    assert not parsed_body.startswith("\n\n")
+
+
 def test_resolve_show_banner_invalid_warns_and_falls_back(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     _write_config(
