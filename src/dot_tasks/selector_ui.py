@@ -16,6 +16,88 @@ class _SelectionOption:
     label: str
 
 
+def _run_prompt_handlers(handlers: object, event: object) -> None:
+    if not isinstance(handlers, list):
+        return
+    for handler in handlers:
+        if not isinstance(handler, dict):
+            continue
+        func = handler.get("func")
+        if not callable(func):
+            continue
+        args = handler.get("args", [])
+        if not isinstance(args, list):
+            args = []
+        func(event, *args)
+
+
+def _bind_fuzzy_submit_only(prompt: object) -> None:
+    """Override fuzzy multiselect Enter to submit only selected values."""
+    kb_func_lookup = getattr(prompt, "kb_func_lookup", None)
+    if not isinstance(kb_func_lookup, dict):
+        return
+
+    original_answer_handlers = kb_func_lookup.get("answer")
+    if not isinstance(original_answer_handlers, list):
+        original_answer_handlers = []
+
+    def _submit_only(event: object) -> None:
+        try:
+            from InquirerPy.base import FakeDocument
+            from prompt_toolkit.validation import ValidationError
+        except Exception:
+            _run_prompt_handlers(original_answer_handlers, event)
+            return
+
+        try:
+            validator = getattr(prompt, "_validator", None)
+            result_value = list(getattr(prompt, "result_value", []))
+            if validator is not None:
+                validator.validate(FakeDocument(result_value))  # type: ignore[arg-type]
+
+            selected_choices = getattr(prompt, "selected_choices", [])
+            status = getattr(prompt, "status", None)
+            app = getattr(event, "app", None)
+            app_exit = getattr(app, "exit", None)
+            if not callable(app_exit):
+                _run_prompt_handlers(original_answer_handlers, event)
+                return
+
+            if isinstance(status, dict):
+                status["answered"] = True
+            if selected_choices:
+                result_name = list(getattr(prompt, "result_name", []))
+                if isinstance(status, dict):
+                    status["result"] = result_name
+                app_exit(result=result_value)
+                return
+
+            if isinstance(status, dict):
+                status["result"] = []
+            app_exit(result=[])
+        except ValidationError as exc:
+            set_error = getattr(prompt, "_set_error", None)
+            if callable(set_error):
+                set_error(str(exc))
+                return
+            _run_prompt_handlers(original_answer_handlers, event)
+        except IndexError:
+            status = getattr(prompt, "status", None)
+            if isinstance(status, dict):
+                status["answered"] = True
+                status["result"] = []
+            app = getattr(event, "app", None)
+            app_exit = getattr(app, "exit", None)
+            if callable(app_exit):
+                app_exit(result=[])
+                return
+            _run_prompt_handlers(original_answer_handlers, event)
+        except Exception:
+            _run_prompt_handlers(original_answer_handlers, event)
+
+    kb_func_lookup["answer"] = [{"func": _submit_only}]
+
+
 def _ensure_tty() -> None:
     if not (sys.stdin.isatty() and sys.stdout.isatty()):
         raise SelectorUnavailableError("interactive selector requires a TTY")
@@ -143,7 +225,7 @@ def select_fuzzy_many(
     choices = [_SelectionOption(value=value, label=label) for value, label in options]
     inquirer = _inquirer()
     try:
-        selected = inquirer.fuzzy(
+        prompt = inquirer.fuzzy(
             message=title,
             choices=[
                 {
@@ -167,7 +249,9 @@ def select_fuzzy_many(
             vi_mode=False,
             mandatory=False,
             raise_keyboard_interrupt=True,
-        ).execute()
+        )
+        _bind_fuzzy_submit_only(prompt)
+        selected = prompt.execute()
     except KeyboardInterrupt:
         return None
     except EOFError:

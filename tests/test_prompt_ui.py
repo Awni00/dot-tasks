@@ -21,6 +21,61 @@ class _FakePrompt:
         return self._result
 
 
+class _FakeEventApp:
+    def __init__(self):
+        self.result = None
+
+    def exit(self, *, result=None):
+        self.result = result
+
+
+class _FakeEvent:
+    def __init__(self):
+        self.app = _FakeEventApp()
+
+
+class _FakeValidator:
+    def __init__(self, *, error: Exception | None = None):
+        self.error = error
+        self.calls = 0
+
+    def validate(self, _document):
+        self.calls += 1
+        if self.error is not None:
+            raise self.error
+
+
+class _FakeFuzzyPrompt:
+    def __init__(
+        self,
+        *,
+        selected_choices=None,
+        result_value=None,
+        result_name=None,
+        validator: _FakeValidator | None = None,
+    ):
+        self.selected_choices = selected_choices or []
+        self.result_value = result_value or []
+        self.result_name = result_name or []
+        self.status = {"answered": False, "result": None}
+        self._validator = validator or _FakeValidator()
+        self.kb_func_lookup = {"answer": [{"func": self._default_answer}]}
+        self.default_answer_called = False
+
+    def _default_answer(self, event):
+        self.default_answer_called = True
+        event.app.exit(result=["fallback"])
+
+    def execute(self):
+        event = _FakeEvent()
+        handlers = self.kb_func_lookup.get("answer", [])
+        for handler in handlers:
+            func = handler.get("func")
+            if callable(func):
+                func(event)
+        return event.app.result
+
+
 class _FakeInquirer:
     def __init__(
         self,
@@ -29,6 +84,7 @@ class _FakeInquirer:
         select_error: Exception | None = None,
         checkbox_result=None,
         fuzzy_result=None,
+        fuzzy_prompt=None,
         fuzzy_error: Exception | None = None,
         text_result=None,
         text_error: Exception | None = None,
@@ -37,6 +93,7 @@ class _FakeInquirer:
         self.select_error = select_error
         self.checkbox_result = checkbox_result
         self.fuzzy_result = fuzzy_result
+        self.fuzzy_prompt = fuzzy_prompt
         self.fuzzy_error = fuzzy_error
         self.text_result = text_result
         self.text_error = text_error
@@ -51,6 +108,8 @@ class _FakeInquirer:
 
     def fuzzy(self, **kwargs):
         self.last_fuzzy_kwargs = kwargs
+        if self.fuzzy_prompt is not None:
+            return self.fuzzy_prompt
         return _FakePrompt(result=self.fuzzy_result, error=self.fuzzy_error)
 
     def text(self, **kwargs):
@@ -450,6 +509,38 @@ def test_select_fuzzy_many_binds_space_toggle(monkeypatch: pytest.MonkeyPatch) -
     assert fake.last_fuzzy_kwargs["keybindings"]["toggle"] == [{"key": "space"}]
 
 
+def test_select_fuzzy_many_enter_without_toggle_submits_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(selector_ui, "_ensure_tty", lambda: None)
+    fake_prompt = _FakeFuzzyPrompt(
+        selected_choices=[],
+        result_value=["a"],
+        result_name=["Task A"],
+    )
+    monkeypatch.setattr(selector_ui, "_inquirer", lambda: _FakeInquirer(fuzzy_prompt=fake_prompt))
+
+    values = selector_ui.select_fuzzy_many("depends_on", [("a", "Task A")])
+    assert values == []
+    assert fake_prompt.default_answer_called is False
+    assert fake_prompt.status["answered"] is True
+    assert fake_prompt.status["result"] == []
+
+
+def test_select_fuzzy_many_enter_with_toggled_values_submits_selected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(selector_ui, "_ensure_tty", lambda: None)
+    fake_prompt = _FakeFuzzyPrompt(
+        selected_choices=[{"name": "Task A", "value": "a"}],
+        result_value=["a"],
+        result_name=["Task A"],
+    )
+    monkeypatch.setattr(selector_ui, "_inquirer", lambda: _FakeInquirer(fuzzy_prompt=fake_prompt))
+
+    values = selector_ui.select_fuzzy_many("depends_on", [("a", "Task A")])
+    assert values == ["a"]
+    assert fake_prompt.default_answer_called is False
+    assert fake_prompt.status["answered"] is True
+    assert fake_prompt.status["result"] == ["Task A"]
+
+
 def test_select_fuzzy_keyboard_interrupt_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(selector_ui, "_ensure_tty", lambda: None)
     monkeypatch.setattr(
@@ -725,6 +816,24 @@ def test_update_form_dependency_gate_no_skips_selector(monkeypatch: pytest.Monke
     assert payload is not None
     assert payload["depends_on"] == []
     assert payload["replace_depends_on"] is False
+
+
+def test_update_form_dependency_gate_yes_empty_selection_replaces_with_empty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    choices = iter(["__keep__", "__keep__", "__keep__"])
+    task = _task("alpha")
+    task.metadata.depends_on = ["t-1"]
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: "")
+    monkeypatch.setattr(prompt_ui, "_prompt_tags", lambda *args, **kwargs: [])
+    monkeypatch.setattr(prompt_ui, "_prompt_yes_no", lambda *args, **kwargs: True)
+    monkeypatch.setattr(prompt_ui, "_prompt_depends_on_choice", lambda *args, **kwargs: [])
+
+    payload = prompt_ui.update_form(task, dependency_options=[("t-1", "Task 1")], tag_options=[])
+    assert payload is not None
+    assert payload["depends_on"] == []
+    assert payload["replace_depends_on"] is True
 
 
 def test_update_form_dependency_gate_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
