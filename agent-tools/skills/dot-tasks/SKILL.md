@@ -62,6 +62,7 @@ For tracked task execution (regardless of how it was triggered), follow:
 
 - Start active execution with `dot-tasks start`.
 - Keep `plan.md` current as implementation decisions become concrete.
+- If Plan Mode produced a finalized `<proposed_plan>`, sync that exact Markdown verbatim to `plan.md` on the first execution turn after Plan Mode (overwrite template content; no summarization).
 - Log meaningful progress with `dot-tasks log-activity --note`.
 - Use `dot-tasks update` for mid-flight metadata/scope/priority changes.
 - Before `dot-tasks complete`, confirm acceptance criteria are satisfied.
@@ -98,7 +99,6 @@ dot-tasks delete <task_name_or_id>                         # soft-delete to tras
 - Direct file edits are allowed for:
   1. `task.md` for writing task summary/specs after `dot-tasks create`.
   2. `plan.md` to keep implementation steps current after `dot-tasks start`.
-- In plan mode, after the plan is finalized and approved by the user, write the full plan to the bound task's `plan.md`.
 - Do not rewrite `activity.md` history; append only.
 - Respect dependency checks.
 
