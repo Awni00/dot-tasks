@@ -23,8 +23,7 @@ Use this skill whenever a repository uses `dot-tasks` for task lifecycle trackin
 2. Rank candidates using this rubric:
    - Higher priority first (`p1` before `p2`, etc).
    - Prefer unblocked tasks (`dependency_health: ready`) over blocked work.
-   - Prefer tasks with clearer specs (`ready`/`autonomous`) when execution should start immediately.
-   - Break ties with effort (`s`/`m` for quick wins, unless user asked for larger work).
+   - Note spec readiness and effort when suggesting tasks to user.
 3. Return the top few options with one-line rationale each.
 4. If high-priority work is blocked, call that out explicitly and include:
    - A short unblock path for the blocked item.
