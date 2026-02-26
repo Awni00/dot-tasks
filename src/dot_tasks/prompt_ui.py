@@ -17,6 +17,9 @@ from .selector_ui import (
 )
 from . import storage
 
+_ADD_NEW_TAGS_SENTINEL = "__add_new_tags__"
+_ADD_NEW_TAGS_LABEL = "+ add new tag(s)"
+
 
 def _warn_selector_fallback(exc: Exception) -> None:
     message = str(exc)
@@ -224,21 +227,29 @@ def _prompt_tags(
     default_values: list[str] | None = None,
 ) -> list[str] | None:
     selected_existing: list[str]
+    created_tags: list[str] = []
     if tag_options:
-        selected_existing = _prompt_tag_choice(
-            "tags (select existing)",
-            tag_options,
+        selector_options = [*tag_options, (_ADD_NEW_TAGS_SENTINEL, _ADD_NEW_TAGS_LABEL)]
+        selected_tags = _prompt_tag_choice(
+            "tags (select existing or add new)",
+            selector_options,
             default_values=default_values,
         )
-        if selected_existing is None:
+        if selected_tags is None:
             return None
+        wants_new_tags = _ADD_NEW_TAGS_SENTINEL in selected_tags
+        selected_existing = [tag for tag in selected_tags if tag != _ADD_NEW_TAGS_SENTINEL]
+        if wants_new_tags:
+            new_tags = _safe_prompt("new tags (comma separated, blank none)", default="")
+            if new_tags is None:
+                return None
+            created_tags = [token.strip() for token in new_tags.split(",") if token.strip()]
     else:
         selected_existing = []
-
-    new_tags = _safe_prompt("new tags (comma separated, blank none)", default="")
-    if new_tags is None:
-        return None
-    created_tags = [token.strip() for token in new_tags.split(",") if token.strip()]
+        new_tags = _safe_prompt("new tags (comma separated, blank none)", default="")
+        if new_tags is None:
+            return None
+        created_tags = [token.strip() for token in new_tags.split(",") if token.strip()]
 
     return sorted({*selected_existing, *created_tags})
 

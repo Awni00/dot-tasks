@@ -746,8 +746,46 @@ def test_tag_choice_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> None
     assert prompt_ui._prompt_tag_choice("tags", [("a", "Tag A")]) is None
 
 
-def test_prompt_tags_merges_existing_and_new(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(prompt_ui, "_prompt_tag_choice", lambda *args, **kwargs: ["backend", "api"])
+def test_prompt_tags_adds_sentinel_and_skips_new_prompt_when_not_selected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def _prompt_tag_choice(title, options, default_values=None):
+        captured["title"] = title
+        captured["options"] = options
+        captured["default_values"] = default_values
+        return ["backend"]
+
+    monkeypatch.setattr(prompt_ui, "_prompt_tag_choice", _prompt_tag_choice)
+    monkeypatch.setattr(
+        prompt_ui,
+        "_safe_prompt",
+        lambda *args, **kwargs: pytest.fail("new tag prompt should be skipped"),
+    )
+
+    values = prompt_ui._prompt_tags(
+        [("backend", "backend"), ("api", "api")],
+        default_values=["api"],
+    )
+    assert values == ["backend"]
+    assert captured["title"] == "tags (select existing or add new)"
+    assert captured["options"] == [
+        ("backend", "backend"),
+        ("api", "api"),
+        (prompt_ui._ADD_NEW_TAGS_SENTINEL, prompt_ui._ADD_NEW_TAGS_LABEL),
+    ]
+    assert captured["default_values"] == ["api"]
+
+
+def test_prompt_tags_merges_existing_and_new_when_add_new_selected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        prompt_ui,
+        "_prompt_tag_choice",
+        lambda *args, **kwargs: ["backend", "api", prompt_ui._ADD_NEW_TAGS_SENTINEL],
+    )
     monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: "api, new-tag")
 
     values = prompt_ui._prompt_tags([("backend", "backend"), ("api", "api")])
@@ -770,9 +808,23 @@ def test_prompt_tags_no_existing_options_prompts_new_only(monkeypatch: pytest.Mo
 
 
 def test_prompt_tags_cancel_when_new_tag_prompt_canceled(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(prompt_ui, "_prompt_tag_choice", lambda *args, **kwargs: ["backend"])
+    monkeypatch.setattr(
+        prompt_ui,
+        "_prompt_tag_choice",
+        lambda *args, **kwargs: ["backend", prompt_ui._ADD_NEW_TAGS_SENTINEL],
+    )
     monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: None)
     assert prompt_ui._prompt_tags([("backend", "backend")]) is None
+
+
+def test_prompt_tags_blank_new_tag_input_preserves_existing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        prompt_ui,
+        "_prompt_tag_choice",
+        lambda *args, **kwargs: ["backend", prompt_ui._ADD_NEW_TAGS_SENTINEL],
+    )
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: "   ")
+    assert prompt_ui._prompt_tags([("backend", "backend")]) == ["backend"]
 
 
 def test_update_form_depends_on_uses_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
