@@ -1703,6 +1703,28 @@ def test_update_accepts_spec_readiness(tmp_path: Path) -> None:
     assert meta["spec_readiness"] == "autonomous"
 
 
+def test_update_accepts_status(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "update-status-test", "--tasks-root", str(root)])
+
+    result = runner.invoke(
+        app,
+        [
+            "update",
+            "update-status-test",
+            "--status",
+            "doing",
+            "--tasks-root",
+            str(root),
+        ],
+    )
+    assert result.exit_code == 0
+    meta, _ = _read_task_md(_task_dir(root, "doing", "update-status-test") / "task.md")
+    assert meta["status"] == "doing"
+    assert meta["date_started"] is not None
+
+
 def test_update_note_option_removed(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])

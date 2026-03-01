@@ -467,6 +467,7 @@ class TaskService:
         self,
         selector: str,
         *,
+        status: str | None = None,
         priority: str | None = None,
         effort: str | None = None,
         spec_readiness: str | None = None,
@@ -478,6 +479,25 @@ class TaskService:
         section_values: dict[str, str] | None = None,
     ) -> Task:
         task = self._find_by_selector(selector, include_trash=False)
+
+        if status is not None:
+            if status not in VALID_STATUSES:
+                raise TaskValidationError(f"Invalid status: {status}")
+            if status != task.metadata.status:
+                storage.move_task_dir(task, self.tasks_root, status)
+                task.metadata.status = status
+                if status == "todo":
+                    task.metadata.date_started = None
+                    task.metadata.date_completed = None
+                elif status == "doing":
+                    if not task.metadata.date_started:
+                        task.metadata.date_started = _today()
+                    task.metadata.date_completed = None
+                elif status == "completed":
+                    if not task.metadata.date_started:
+                        task.metadata.date_started = task.metadata.date_created
+                    if not task.metadata.date_completed:
+                        task.metadata.date_completed = _today()
 
         if priority is not None:
             if priority not in VALID_PRIORITIES:

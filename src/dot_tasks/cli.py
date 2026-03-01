@@ -907,6 +907,7 @@ def view_cmd(
 @app.command("update")
 def update_cmd(
     task_name: Annotated[str | None, typer.Argument(help="Task name or task_id")] = None,
+    status: Annotated[str | None, typer.Option("--status")] = None,
     priority: Annotated[str | None, typer.Option("--priority")] = None,
     effort: Annotated[str | None, typer.Option("--effort")] = None,
     spec_readiness: Annotated[str | None, typer.Option("--spec-readiness")] = None,
@@ -929,6 +930,7 @@ def update_cmd(
 
         has_edit_flags = any(
             [
+                status is not None,
                 priority is not None,
                 effort is not None,
                 spec_readiness is not None,
@@ -948,6 +950,7 @@ def update_cmd(
         )
         selected_task = svc.view_task(selector)
 
+        local_status = status
         local_priority = priority
         local_effort = effort
         local_spec_readiness = spec_readiness
@@ -978,6 +981,7 @@ def update_cmd(
             )
             if form is None:
                 _exit_canceled(1)
+            local_status = form.get("status")
             local_priority = form.get("priority")
             local_effort = form.get("effort")
             local_spec_readiness = form.get("spec_readiness")
@@ -990,6 +994,7 @@ def update_cmd(
 
         task = svc.update_task(
             selector,
+            status=local_status,
             priority=local_priority,
             effort=local_effort,
             spec_readiness=local_spec_readiness,

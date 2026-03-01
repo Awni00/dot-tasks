@@ -828,7 +828,7 @@ def test_prompt_tags_blank_new_tag_input_preserves_existing(monkeypatch: pytest.
 
 
 def test_update_form_depends_on_uses_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    choices = iter(["__keep__", "__keep__", "__keep__"])
+    choices = iter(["__keep__", "__keep__", "__keep__", "__keep__"])
     captured: dict[str, object] = {}
 
     def _depends(title, options, default_values=None):
@@ -852,7 +852,7 @@ def test_update_form_depends_on_uses_defaults(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_update_form_dependency_gate_no_skips_selector(monkeypatch: pytest.MonkeyPatch) -> None:
-    choices = iter(["__keep__", "__keep__", "__keep__"])
+    choices = iter(["__keep__", "__keep__", "__keep__", "__keep__"])
     task = _task("alpha")
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
     monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: "")
@@ -873,7 +873,7 @@ def test_update_form_dependency_gate_no_skips_selector(monkeypatch: pytest.Monke
 def test_update_form_dependency_gate_yes_empty_selection_replaces_with_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    choices = iter(["__keep__", "__keep__", "__keep__"])
+    choices = iter(["__keep__", "__keep__", "__keep__", "__keep__"])
     task = _task("alpha")
     task.metadata.depends_on = ["t-1"]
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
@@ -889,7 +889,7 @@ def test_update_form_dependency_gate_yes_empty_selection_replaces_with_empty(
 
 
 def test_update_form_dependency_gate_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
-    choices = iter(["__keep__", "__keep__", "__keep__"])
+    choices = iter(["__keep__", "__keep__", "__keep__", "__keep__"])
     task = _task("alpha")
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
     monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: "")
@@ -900,7 +900,7 @@ def test_update_form_dependency_gate_cancel_returns_none(monkeypatch: pytest.Mon
 
 
 def test_update_form_no_dependency_options_skips_gate_and_selector(monkeypatch: pytest.MonkeyPatch) -> None:
-    choices = iter(["__keep__", "__keep__", "__keep__"])
+    choices = iter(["__keep__", "__keep__", "__keep__", "__keep__"])
     task = _task("alpha")
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
     monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: "")
@@ -935,7 +935,7 @@ def test_create_form_uses_prompt_tags_payload(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_update_form_tag_prompt_uses_existing_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
-    choices = iter(["__keep__", "__keep__", "__keep__"])
+    choices = iter(["__keep__", "__keep__", "__keep__", "__keep__"])
     captured: dict[str, object] = {}
 
     def _prompt_tags(tag_options, default_values=None):
@@ -965,7 +965,7 @@ def test_create_form_cancel_on_text_field_returns_none(monkeypatch: pytest.Monke
 
 
 def test_update_form_cancel_on_text_field_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
-    choices = iter(["__keep__", "__keep__", "__keep__"])
+    choices = iter(["__keep__", "__keep__", "__keep__", "__keep__"])
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
     monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: None)
     assert prompt_ui.update_form(_task("alpha"), dependency_options=[]) is None

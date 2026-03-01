@@ -6,7 +6,7 @@ from typing import Any, Callable
 
 import typer
 
-from .models import Task, VALID_EFFORTS, VALID_PRIORITIES, VALID_SPEC_READINESS
+from .models import Task, VALID_EFFORTS, VALID_PRIORITIES, VALID_SPEC_READINESS, VALID_STATUSES
 from .selector_ui import (
     SelectorUnavailableError,
     select_fuzzy,
@@ -544,6 +544,13 @@ def update_form(
     sections = task_body_sections or []
     existing_values = current_section_values or {}
 
+    status = _prompt_single_choice(
+        "status",
+        [("__keep__", "Keep current"), *[(value, value) for value in VALID_STATUSES]],
+        default_value="__keep__",
+    )
+    if status is None:
+        return None
     priority = _prompt_single_choice(
         "priority",
         [("__keep__", "Keep current"), *[(value, value) for value in VALID_PRIORITIES]],
@@ -610,6 +617,7 @@ def update_form(
                 replace_depends_on = True
                 break
     return {
+        "status": None if status == "__keep__" else status,
         "priority": None if priority == "__keep__" else priority,
         "effort": None if effort == "__keep__" else effort,
         "spec_readiness": None if spec_readiness == "__keep__" else spec_readiness,
