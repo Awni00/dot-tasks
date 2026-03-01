@@ -62,15 +62,15 @@ Sleep 750ms
 Enter
 # Provide summary text (multiline).
 Sleep 750ms
-Backspace 6
-Type "- Add README CLI demo media"
+Backspace 4
+Type "Add README CLI demo media"
 Escape
 Enter
 
 # Provide acceptance criteria (multiline).
 Sleep 750ms
-Backspace 6
-Type "- Runnable with `vhs` and showcases commands correctly."
+# Backspace 4
+# Type "Runnable with `vhs` and showcases commands correctly."
 Escape
 Enter
 
@@ -98,4 +98,4 @@ Enter
 Sleep 500ms
 Enter
 # Final pause so completion message remains visible.
-Sleep 1800ms
+Sleep 3500ms
