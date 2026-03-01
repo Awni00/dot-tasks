@@ -1924,3 +1924,86 @@ def test_init_nointeractive_config_includes_task_body_sections(tmp_path: Path) -
         {"name": "Summary", "default": "- TODO"},
         {"name": "Acceptance Criteria", "default": "- TODO"},
     ]
+
+
+def test_update_prevents_circular_dependency(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "task-a", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "task-b", "--tasks-root", str(root)])
+
+    res1 = runner.invoke(app, ["update", "task-a", "--depends-on", "task-b", "--tasks-root", str(root)])
+    assert res1.exit_code == 0
+
+    res2 = runner.invoke(app, ["update", "task-b", "--depends-on", "task-a", "--tasks-root", str(root)])
+    assert res2.exit_code == 1
+    assert "Dependency cycle detected" in res2.output
+
+
+def test_update_prevents_self_dependency(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "task-c", "--tasks-root", str(root)])
+    res = runner.invoke(app, ["update", "task-c", "--depends-on", "task-c", "--tasks-root", str(root)])
+    assert res.exit_code == 1
+    assert "cannot depend on itself" in res.output
+
+
+def test_update_prevents_circular_dependency_length_3(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "task-a", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "task-b", "--depends-on", "task-a", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "task-c", "--depends-on", "task-b", "--tasks-root", str(root)])
+
+    res = runner.invoke(app, ["update", "task-a", "--depends-on", "task-c", "--tasks-root", str(root)])
+    assert res.exit_code == 1
+    assert "Dependency cycle detected" in res.output
+
+
+def test_update_prevents_circular_dependency_length_4(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "task-a", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "task-b", "--depends-on", "task-a", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "task-c", "--depends-on", "task-b", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "task-d", "--depends-on", "task-c", "--tasks-root", str(root)])
+
+    res = runner.invoke(app, ["update", "task-a", "--depends-on", "task-d", "--tasks-root", str(root)])
+    assert res.exit_code == 1
+    assert "Dependency cycle detected" in res.output
+
+
+def test_update_interactive_form_retries_on_circular_dependency(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "task-a", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "task-b", "--depends-on", "task-a", "--tasks-root", str(root)])
+
+    task_b_meta, _ = _read_task_md(_task_dir(root, "todo", "task-b") / "task.md")
+    task_b_id = task_b_meta["task_id"]
+
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    
+    call_count = 0
+    def mock_prompt_depends(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return [task_b_id]
+        return []
+
+    monkeypatch.setattr("dot_tasks.prompt_ui._prompt_depends_on_choice", mock_prompt_depends)
+    monkeypatch.setattr("dot_tasks.prompt_ui._prompt_yes_no", lambda *args, **kwargs: True)
+    monkeypatch.setattr("dot_tasks.prompt_ui._prompt_single_choice", lambda *args, **kwargs: "__keep__")
+    monkeypatch.setattr("dot_tasks.prompt_ui._safe_prompt", lambda *args, **kwargs: "")
+    monkeypatch.setattr("dot_tasks.prompt_ui._prompt_tags", lambda *args, **kwargs: [])
+
+    result = runner.invoke(app, ["update", "task-a", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert call_count == 2
+
+
