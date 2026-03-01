@@ -30,13 +30,16 @@ Type "dot-tasks"
 Enter
 # Brief pause so picker is visible before navigation.
 Sleep 900ms
-# 'list' is currently the 5th command in the picker, so move down 4 times.
-Down@250ms 4
+# 'list' is currently the 7th command in the picker, so move down 6 times.
+Down@250ms 6
 Enter
 # Hold on list output so user can read it.
 Sleep 2200ms
 
 # Start interactive create flow after listing tasks.
+Type "clear"
+Enter
+Sleep 700ms
 Type "dot-tasks create"
 Enter
 Sleep 700ms
@@ -57,14 +60,40 @@ Enter
 # Accept blank owner.
 Sleep 750ms
 Enter
-# Provide summary text.
+# Provide summary text (multiline).
 Sleep 750ms
-Type "Add README CLI demo media"
+Backspace 6
+Type "- Add README CLI demo media"
+Escape
 Enter
-# Provide tags.
-Sleep 500ms
+
+# Provide acceptance criteria (multiline).
+Sleep 750ms
+Backspace 6
+Type "- Runnable with `vhs` and showcases commands correctly."
+Escape
+Enter
+
+# Provide spec_readiness.
+Sleep 750ms
+Down 2
+Sleep 250ms
+Enter
+
+# Provide tags (select + add new, then type them).
+Sleep 750ms
+Down 3
+Space
+Sleep 750ms
+Type "add"
+Sleep 750ms
+Space
+Sleep 750ms
+Enter
+Sleep 750ms
 Type "demo,readme"
 Enter
+
 # Select default "no" for dependencies.
 Sleep 500ms
 Enter
