@@ -15,6 +15,7 @@ from . import agents_snippet, render, storage
 from .models import Task, TaskError, TaskValidationError
 from .prompt_ui import choose_command, choose_task, create_form, init_config_form, update_form
 from .service import TaskService
+from . import service
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BANNER_PATH = REPO_ROOT / "assets" / "banner.txt"
@@ -669,15 +670,18 @@ def create_cmd(
         local_tags = list(tag)
         local_depends = list(depends_on)
         local_summary = summary
+        local_section_values: dict[str, str] | None = None
 
         if open_form:
             tasks = svc.list_tasks()
             dependency_options = _dependency_choices(tasks)
             tag_options = _tag_choices(tasks)
+            task_body_sections = storage.resolve_task_body_sections(svc.tasks_root)
             form = create_form(
                 default_name=task_name,
                 dependency_options=dependency_options,
                 tag_options=tag_options,
+                task_body_sections=task_body_sections,
             )
             if form is None:
                 _exit_canceled(1)
@@ -688,7 +692,8 @@ def create_cmd(
             local_owner = form["owner"]
             local_tags = form["tags"]
             local_depends = form["depends_on"]
-            local_summary = form["summary"]
+            local_summary = form.get("summary", "")
+            local_section_values = form.get("section_values")
 
         if not name:
             raise TaskValidationError("task_name is required")
@@ -702,6 +707,7 @@ def create_cmd(
             owner=local_owner,
             tags=local_tags,
             depends_on=local_depends,
+            section_values=local_section_values,
         )
         if _can_render_rich_detail_output():
             _print_rich(render.render_create_success_rich(task))
@@ -951,6 +957,7 @@ def update_cmd(
         local_replace_depends = clear_depends_on
 
         open_form = _can_prompt(interactive_enabled) and (task_name is None or not has_edit_flags)
+        local_section_values: dict[str, str] | None = None
         if open_form:
             tasks = svc.list_tasks()
             dependency_options = _dependency_choices(
@@ -958,10 +965,14 @@ def update_cmd(
                 exclude_task_id=selected_task.metadata.task_id,
             )
             tag_options = _tag_choices(tasks)
+            task_body_sections = storage.resolve_task_body_sections(svc.tasks_root)
+            current_section_values = service._parse_body_sections(selected_task.body)
             form = update_form(
                 selected_task,
                 dependency_options=dependency_options,
                 tag_options=tag_options,
+                task_body_sections=task_body_sections,
+                current_section_values=current_section_values,
             )
             if form is None:
                 _exit_canceled(1)
@@ -973,6 +984,7 @@ def update_cmd(
             local_replace_tags = True
             local_depends = list(form.get("depends_on") or [])
             local_replace_depends = bool(form.get("replace_depends_on"))
+            local_section_values = form.get("section_values")
 
         task = svc.update_task(
             selector,
@@ -984,6 +996,7 @@ def update_cmd(
             replace_tags=local_replace_tags,
             depends_on=local_depends,
             clear_depends_on=clear_depends_on or local_replace_depends,
+            section_values=local_section_values,
         )
         typer.echo(f"Updated: {task.metadata.task_name}")
 

@@ -650,7 +650,7 @@ def test_select_text_runtime_error_raises_unavailable(monkeypatch: pytest.Monkey
 
 
 def test_safe_prompt_uses_selector_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(prompt_ui, "select_text", lambda message, default_value="": "value-from-selector")
+    monkeypatch.setattr(prompt_ui, "select_text", lambda message, default_value="", multiline=False: "value-from-selector")
     monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: pytest.fail("fallback prompt used"))
 
     assert prompt_ui._safe_prompt("summary", default="default") == "value-from-selector"
@@ -660,7 +660,7 @@ def test_safe_prompt_falls_back_to_typer_on_selector_unavailable(monkeypatch: py
     monkeypatch.setattr(
         prompt_ui,
         "select_text",
-        lambda message, default_value="": (_ for _ in ()).throw(
+        lambda message, default_value="", multiline=False: (_ for _ in ()).throw(
             selector_ui.SelectorUnavailableError("fallback")
         ),
     )
@@ -673,7 +673,7 @@ def test_safe_prompt_returns_none_when_typer_aborts(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(
         prompt_ui,
         "select_text",
-        lambda message, default_value="": (_ for _ in ()).throw(
+        lambda message, default_value="", multiline=False: (_ for _ in ()).throw(
             selector_ui.SelectorUnavailableError("fallback")
         ),
     )

@@ -22,6 +22,10 @@ from .models import (
 TASK_META_KEYS = [f.name for f in fields(TaskMetadata)]
 DEFAULT_INTERACTIVE_ENABLED = True
 DEFAULT_SHOW_BANNER = True
+DEFAULT_TASK_BODY_SECTIONS: list[dict[str, str]] = [
+    {"name": "Summary", "default": "- TODO"},
+    {"name": "Acceptance Criteria", "default": "- TODO"},
+]
 LIST_TABLE_COLUMNS_SUPPORTED = (
     "task_name",
     "task_id",
@@ -104,12 +108,14 @@ def default_config(
     interactive_enabled: bool = DEFAULT_INTERACTIVE_ENABLED,
     list_columns: list[dict[str, int | str]] | None = None,
     show_banner: bool = DEFAULT_SHOW_BANNER,
+    task_body_sections: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     return {
         "settings": build_managed_settings(
             interactive_enabled,
             list_columns,
             show_banner=show_banner,
+            task_body_sections=task_body_sections,
         )
     }
 
@@ -118,6 +124,7 @@ def build_managed_settings(
     interactive_enabled: bool = DEFAULT_INTERACTIVE_ENABLED,
     list_columns: list[dict[str, int | str]] | None = None,
     show_banner: bool = DEFAULT_SHOW_BANNER,
+    task_body_sections: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     return {
         "interactive_enabled": interactive_enabled,
@@ -125,6 +132,7 @@ def build_managed_settings(
         "list_table": {
             "columns": _default_list_table_columns(list_columns),
         },
+        "task_body_sections": list(task_body_sections) if task_body_sections is not None else list(DEFAULT_TASK_BODY_SECTIONS),
     }
 
 
@@ -133,6 +141,7 @@ def merge_managed_config(
     interactive_enabled: bool = DEFAULT_INTERACTIVE_ENABLED,
     list_columns: list[dict[str, int | str]] | None = None,
     show_banner: bool = DEFAULT_SHOW_BANNER,
+    task_body_sections: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     merged = dict(existing_config) if isinstance(existing_config, dict) else {}
     existing_settings = merged.get("settings", {})
@@ -142,6 +151,7 @@ def merge_managed_config(
             interactive_enabled,
             list_columns,
             show_banner=show_banner,
+            task_body_sections=task_body_sections,
         )
     )
     merged["settings"] = settings
@@ -163,6 +173,7 @@ def upsert_init_config(
     interactive_enabled: bool = DEFAULT_INTERACTIVE_ENABLED,
     list_columns: list[dict[str, int | str]] | None = None,
     show_banner: bool = DEFAULT_SHOW_BANNER,
+    task_body_sections: list[dict[str, str]] | None = None,
 ) -> Literal["created", "updated"]:
     path = config_path(tasks_root)
     exists = path.exists()
@@ -172,6 +183,7 @@ def upsert_init_config(
         interactive_enabled=interactive_enabled,
         list_columns=list_columns,
         show_banner=show_banner,
+        task_body_sections=task_body_sections,
     )
     write_config(tasks_root, merged)
     return "updated" if exists else "created"
@@ -230,7 +242,7 @@ def resolve_interactive_enabled(
             warn(f"Invalid settings section in {config_path(tasks_root)}. Using defaults.")
         return DEFAULT_INTERACTIVE_ENABLED
 
-    supported_settings_keys = {"interactive_enabled", "show_banner", "list_table"}
+    supported_settings_keys = {"interactive_enabled", "show_banner", "list_table", "task_body_sections"}
     for key in settings.keys():
         if key not in supported_settings_keys and warn is not None:
             warn(f"Unsupported settings key '{key}' in {config_path(tasks_root)}. Ignoring.")
@@ -264,7 +276,7 @@ def resolve_show_banner(
             warn(f"Invalid settings section in {config_path(tasks_root)}. Using defaults.")
         return DEFAULT_SHOW_BANNER
 
-    supported_settings_keys = {"interactive_enabled", "show_banner", "list_table"}
+    supported_settings_keys = {"interactive_enabled", "show_banner", "list_table", "task_body_sections"}
     for key in settings.keys():
         if key not in supported_settings_keys and warn is not None:
             warn(f"Unsupported settings key '{key}' in {config_path(tasks_root)}. Ignoring.")
@@ -299,7 +311,7 @@ def resolve_list_table_columns(
             warn(f"Invalid settings section in {config_path(tasks_root)}. Using defaults.")
         return defaults
 
-    supported_settings_keys = {"interactive_enabled", "show_banner", "list_table"}
+    supported_settings_keys = {"interactive_enabled", "show_banner", "list_table", "task_body_sections"}
     for key in settings.keys():
         if key not in supported_settings_keys and warn is not None:
             warn(f"Unsupported settings key '{key}' in {config_path(tasks_root)}. Ignoring.")
@@ -377,6 +389,72 @@ def resolve_list_table_columns(
     if warn is not None:
         warn(
             f"No valid settings.list_table.columns in {config_path(tasks_root)}. "
+            "Using defaults."
+        )
+    return defaults
+
+
+def resolve_task_body_sections(
+    tasks_root: Path,
+    warn: Callable[[str], None] | None = None,
+) -> list[dict[str, str]]:
+    defaults = list(DEFAULT_TASK_BODY_SECTIONS)
+    data = read_config(tasks_root, warn=warn)
+    supported_top_keys = {"settings"}
+    for key in data.keys():
+        if key not in supported_top_keys and warn is not None:
+            warn(f"Unsupported config key '{key}' in {config_path(tasks_root)}. Ignoring.")
+
+    settings = data.get("settings", {})
+    if not isinstance(settings, dict):
+        if warn is not None:
+            warn(f"Invalid settings section in {config_path(tasks_root)}. Using defaults.")
+        return defaults
+
+    supported_settings_keys = {"interactive_enabled", "show_banner", "list_table", "task_body_sections"}
+    for key in settings.keys():
+        if key not in supported_settings_keys and warn is not None:
+            warn(f"Unsupported settings key '{key}' in {config_path(tasks_root)}. Ignoring.")
+
+    sections = settings.get("task_body_sections")
+    if sections is None:
+        return defaults
+    if not isinstance(sections, list):
+        if warn is not None:
+            warn(
+                f"Invalid settings.task_body_sections in {config_path(tasks_root)}. "
+                "Using defaults."
+            )
+        return defaults
+
+    validated: list[dict[str, str]] = []
+    for index, raw_section in enumerate(sections, start=1):
+        if not isinstance(raw_section, dict):
+            if warn is not None:
+                warn(
+                    f"Invalid section entry at settings.task_body_sections[{index}] in "
+                    f"{config_path(tasks_root)}. Ignoring."
+                )
+            continue
+
+        name = raw_section.get("name")
+        if not name or not isinstance(name, str):
+            if warn is not None:
+                warn(
+                    f"Missing or invalid 'name' at settings.task_body_sections[{index}] in "
+                    f"{config_path(tasks_root)}. Ignoring."
+                )
+            continue
+
+        default_content = str(raw_section.get("default", "- TODO"))
+        validated.append({"name": name, "default": default_content})
+
+    if validated:
+        return validated
+
+    if warn is not None:
+        warn(
+            f"No valid settings.task_body_sections in {config_path(tasks_root)}. "
             "Using defaults."
         )
     return defaults

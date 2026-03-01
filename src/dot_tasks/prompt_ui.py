@@ -28,9 +28,9 @@ def _warn_selector_fallback(exc: Exception) -> None:
     typer.echo(f"Warning: {message}; falling back to numeric prompts.", err=True)
 
 
-def _safe_prompt(message: str, *, default: str = "") -> str | None:
+def _safe_prompt(message: str, *, default: str = "", multiline: bool = False) -> str | None:
     try:
-        selected = select_text(message, default_value=default)
+        selected = select_text(message, default_value=default, multiline=multiline)
     except SelectorUnavailableError:
         pass
     else:
@@ -443,9 +443,11 @@ def create_form(
     default_name: str | None = None,
     dependency_options: list[tuple[str, str]] | None = None,
     tag_options: list[tuple[str, str]] | None = None,
+    task_body_sections: list[dict[str, str]] | None = None,
 ) -> dict[str, Any] | None:
     dep_options = dependency_options or []
     available_tags = tag_options or []
+    sections = task_body_sections or []
 
     task_name = _safe_prompt("task_name", default=default_name or "")
     if task_name is None:
@@ -467,9 +469,20 @@ def create_form(
     owner = _safe_prompt("owner", default="")
     if owner is None:
         return None
-    summary = _safe_prompt("summary", default="")
-    if summary is None:
-        return None
+
+    section_values: dict[str, str] = {}
+    for section in sections:
+        name = section["name"]
+        default_content = section.get("default", "- TODO")
+        value = _safe_prompt(
+            f"{name} (Esc+Enter to submit)",
+            default=default_content,
+            multiline=True,
+        )
+        if value is None:
+            return None
+        section_values[name] = value.strip()
+
     spec_readiness = _prompt_single_choice(
         "spec_readiness",
         [(value, value) for value in VALID_SPEC_READINESS],
@@ -502,7 +515,7 @@ def create_form(
         "priority": priority,
         "effort": effort,
         "owner": owner.strip() or None,
-        "summary": summary.strip(),
+        "section_values": section_values,
         "spec_readiness": spec_readiness,
         "tags": tags,
         "depends_on": depends_on,
@@ -513,9 +526,13 @@ def update_form(
     task: Task,
     dependency_options: list[tuple[str, str]] | None = None,
     tag_options: list[tuple[str, str]] | None = None,
+    task_body_sections: list[dict[str, str]] | None = None,
+    current_section_values: dict[str, str] | None = None,
 ) -> dict[str, Any] | None:
     dep_options = dependency_options or []
     available_tags = tag_options or []
+    sections = task_body_sections or []
+    existing_values = current_section_values or {}
 
     priority = _prompt_single_choice(
         "priority",
@@ -541,6 +558,20 @@ def update_form(
     owner = _safe_prompt("owner (blank to keep)", default=task.metadata.owner or "")
     if owner is None:
         return None
+
+    section_values: dict[str, str] = {}
+    for section in sections:
+        name = section["name"]
+        default_content = existing_values.get(name, section.get("default", "- TODO"))
+        value = _safe_prompt(
+            f"{name} (Esc+Enter to submit)",
+            default=default_content,
+            multiline=True,
+        )
+        if value is None:
+            return None
+        section_values[name] = value.strip()
+
     tags = _prompt_tags(available_tags, default_values=task.metadata.tags)
     if tags is None:
         return None
@@ -565,6 +596,7 @@ def update_form(
         "effort": None if effort == "__keep__" else effort,
         "spec_readiness": None if spec_readiness == "__keep__" else spec_readiness,
         "owner": owner,
+        "section_values": section_values,
         "tags": tags,
         "depends_on": depends_on,
         "replace_depends_on": replace_depends_on,

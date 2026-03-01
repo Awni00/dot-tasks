@@ -309,3 +309,102 @@ def test_resolve_show_banner_invalid_warns_and_falls_back(tmp_path: Path) -> Non
     warnings: list[str] = []
     assert storage.resolve_show_banner(root, warn=warnings.append) is True
     assert any("Invalid settings.show_banner" in message for message in warnings)
+
+
+def test_resolve_task_body_sections_defaults_when_missing(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    warnings: list[str] = []
+    sections = storage.resolve_task_body_sections(root, warn=warnings.append)
+    assert sections == [
+        {"name": "Summary", "default": "- TODO"},
+        {"name": "Acceptance Criteria", "default": "- TODO"},
+    ]
+    assert warnings == []
+
+
+def test_resolve_task_body_sections_reads_custom(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    _write_config(
+        root,
+        (
+            "settings:\n"
+            "  task_body_sections:\n"
+            "    - name: Overview\n"
+            '      default: "- Describe the feature"\n'
+            "    - name: Design\n"
+            '      default: "- TODO"\n'
+            "    - name: Testing\n"
+            '      default: "- TODO"\n'
+        ),
+    )
+
+    warnings: list[str] = []
+    sections = storage.resolve_task_body_sections(root, warn=warnings.append)
+    assert sections == [
+        {"name": "Overview", "default": "- Describe the feature"},
+        {"name": "Design", "default": "- TODO"},
+        {"name": "Testing", "default": "- TODO"},
+    ]
+    assert warnings == []
+
+
+def test_resolve_task_body_sections_invalid_falls_back(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    _write_config(
+        root,
+        (
+            "settings:\n"
+            "  task_body_sections:\n"
+            "    - not-a-dict\n"
+            "    - name: ''\n"
+        ),
+    )
+
+    warnings: list[str] = []
+    sections = storage.resolve_task_body_sections(root, warn=warnings.append)
+    assert sections == storage.DEFAULT_TASK_BODY_SECTIONS
+    assert any("Invalid section entry" in w for w in warnings)
+    assert any("Missing or invalid 'name'" in w for w in warnings)
+    assert any("No valid settings.task_body_sections" in w for w in warnings)
+
+
+def test_resolve_task_body_sections_non_list_falls_back(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    _write_config(
+        root,
+        (
+            "settings:\n"
+            "  task_body_sections: not-a-list\n"
+        ),
+    )
+
+    warnings: list[str] = []
+    sections = storage.resolve_task_body_sections(root, warn=warnings.append)
+    assert sections == storage.DEFAULT_TASK_BODY_SECTIONS
+    assert any("Invalid settings.task_body_sections" in w for w in warnings)
+
+
+def test_resolve_task_body_sections_missing_default_uses_todo(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    _write_config(
+        root,
+        (
+            "settings:\n"
+            "  task_body_sections:\n"
+            "    - name: Notes\n"
+        ),
+    )
+
+    sections = storage.resolve_task_body_sections(root)
+    assert sections == [{"name": "Notes", "default": "- TODO"}]
+
+
+def test_default_config_includes_task_body_sections() -> None:
+    payload = storage.default_config()
+    assert payload["settings"]["task_body_sections"] == storage.DEFAULT_TASK_BODY_SECTIONS
+
+
+def test_default_config_custom_task_body_sections() -> None:
+    custom = [{"name": "Notes", "default": "- TODO"}]
+    payload = storage.default_config(task_body_sections=custom)
+    assert payload["settings"]["task_body_sections"] == custom

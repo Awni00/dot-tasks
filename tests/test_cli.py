@@ -1551,7 +1551,7 @@ def test_update_interactive_form_replaces_dependencies(
     monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
     monkeypatch.setattr(
         "dot_tasks.cli.update_form",
-        lambda task, dependency_options, tag_options: {
+        lambda task, dependency_options, tag_options, **kwargs: {
             "priority": None,
             "effort": None,
             "owner": task.metadata.owner or "",
@@ -1592,7 +1592,7 @@ def test_update_dependency_options_show_status_and_use_list_order(
 
     captured: dict[str, object] = {}
 
-    def _update_form(task, dependency_options, tag_options):
+    def _update_form(task, dependency_options, tag_options, **kwargs):
         captured["dependency_options"] = dependency_options
         captured["tag_options"] = tag_options
         return {
@@ -1650,7 +1650,7 @@ def test_update_interactive_form_preserves_dependencies_when_not_replacing(
     monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
     monkeypatch.setattr(
         "dot_tasks.cli.update_form",
-        lambda task, dependency_options, tag_options: {
+        lambda task, dependency_options, tag_options, **kwargs: {
             "priority": None,
             "effort": None,
             "spec_readiness": None,
@@ -1807,7 +1807,7 @@ def test_create_interactive_cancel_prints_canceled_and_exits_1(
     monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
     monkeypatch.setattr(
         "dot_tasks.cli.create_form",
-        lambda default_name, dependency_options, tag_options: None,
+        lambda default_name, dependency_options, tag_options, **kwargs: None,
     )
 
     result = runner.invoke(app, ["create", "--tasks-root", str(root)])
@@ -1827,7 +1827,7 @@ def test_create_interactive_form_receives_tag_options(
 
     captured: dict[str, object] = {}
 
-    def _create_form(default_name, dependency_options, tag_options):
+    def _create_form(default_name, dependency_options, tag_options, **kwargs):
         captured["tag_options"] = tag_options
         return {
             "task_name": "interactive-created",
@@ -1848,4 +1848,79 @@ def test_create_interactive_form_receives_tag_options(
     assert captured["tag_options"] == [
         ("api", "api (1)"),
         ("backend", "backend (2)"),
+    ]
+
+
+def test_create_uses_custom_sections_from_config(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root), "--nointeractive"])
+    (root / "config.yaml").write_text(
+        (
+            "settings:\n"
+            "  interactive_enabled: true\n"
+            "  show_banner: true\n"
+            "  list_table:\n"
+            "    columns:\n"
+            "      - name: task_name\n"
+            "        width: 32\n"
+            "  task_body_sections:\n"
+            "    - name: Overview\n"
+            '      default: "- describe the change"\n'
+            "    - name: Design Notes\n"
+            '      default: "- TODO"\n'
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["create", "custom-sections", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+
+    task_dir = _task_dir(root, "todo", "custom-sections")
+    _, body = _read_task_md(task_dir / "task.md")
+    assert "## Overview" in body
+    assert "- describe the change" in body
+    assert "## Design Notes" in body
+    assert "## Summary" not in body
+    assert "## Acceptance Criteria" not in body
+
+
+def test_create_summary_populates_summary_section(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root), "--nointeractive"])
+
+    result = runner.invoke(
+        app,
+        ["create", "fill-summary", "--summary", "implement the feature", "--tasks-root", str(root)],
+    )
+    assert result.exit_code == 0
+
+    task_dir = _task_dir(root, "todo", "fill-summary")
+    _, body = _read_task_md(task_dir / "task.md")
+    assert "## Summary" in body
+    assert "- implement the feature" in body
+
+
+def test_create_empty_summary_uses_default(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root), "--nointeractive"])
+
+    result = runner.invoke(app, ["create", "no-summary", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+
+    task_dir = _task_dir(root, "todo", "no-summary")
+    _, body = _read_task_md(task_dir / "task.md")
+    assert "## Summary" in body
+    assert "- TODO" in body
+
+
+def test_init_nointeractive_config_includes_task_body_sections(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    result = runner.invoke(app, ["init", "--tasks-root", str(root), "--nointeractive"])
+    assert result.exit_code == 0
+
+    cfg = _read_config(root / "config.yaml")
+    sections = cfg["settings"]["task_body_sections"]
+    assert sections == [
+        {"name": "Summary", "default": "- TODO"},
+        {"name": "Acceptance Criteria", "default": "- TODO"},
     ]

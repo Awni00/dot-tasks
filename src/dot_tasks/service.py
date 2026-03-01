@@ -24,6 +24,50 @@ from . import storage
 STATUS_SORT = {"todo": 0, "doing": 1, "completed": 2}
 
 
+def _render_task_body(
+    sections: list[dict[str, str]],
+    summary: str = "",
+    section_values: dict[str, str] | None = None,
+) -> str:
+    """Build the task.md body from configured sections.
+
+    *section_values* is a mapping of ``section name → content`` that takes
+    precedence over defaults.  For backward compatibility the *summary*
+    parameter populates the ``Summary`` section when *section_values* is
+    not provided.
+    """
+    values = dict(section_values) if section_values else {}
+    # Legacy: if summary is provided and no explicit section_values for Summary
+    summary_text = summary.strip()
+    if summary_text and "Summary" not in values:
+        values["Summary"] = f"- {summary_text}"
+
+    parts: list[str] = []
+    for section in sections:
+        name = section["name"]
+        default_content = section.get("default", "- TODO")
+        content = values.get(name, default_content)
+        parts.append(f"## {name}\n{content}\n")
+    return "\n".join(parts)
+
+
+def _parse_body_sections(body: str) -> dict[str, str]:
+    """Extract ``{section_name: content}`` from an existing task.md body."""
+    import re
+
+    result: dict[str, str] = {}
+    parts = re.split(r"^## ", body, flags=re.MULTILINE)
+    for part in parts:
+        if not part.strip():
+            continue
+        lines = part.split("\n", 1)
+        name = lines[0].strip()
+        content = lines[1].strip() if len(lines) > 1 else ""
+        if name:
+            result[name] = content
+    return result
+
+
 def _today() -> str:
     return dt.date.today().isoformat()
 
@@ -274,6 +318,7 @@ class TaskService:
         owner: str | None = None,
         tags: Iterable[str] | None = None,
         depends_on: Iterable[str] | None = None,
+        section_values: dict[str, str] | None = None,
     ) -> Task:
         self.validate_task_name(task_name)
         if priority not in VALID_PRIORITIES:
@@ -288,13 +333,8 @@ class TaskService:
         task_id = storage.next_task_id(self.tasks_root, today)
         dep_ids = self._resolve_dependency_refs(depends_on or [])
 
-        body_summary = summary.strip() or "TODO"
-        body = (
-            "## Summary\n"
-            f"- {body_summary}\n\n"
-            "## Acceptance Criteria\n"
-            "- TODO\n"
-        )
+        sections = storage.resolve_task_body_sections(self.tasks_root)
+        body = _render_task_body(sections, summary, section_values=section_values)
 
         meta = TaskMetadata(
             task_id=task_id,
@@ -390,6 +430,7 @@ class TaskService:
         replace_tags: bool = False,
         depends_on: Iterable[str] | None = None,
         clear_depends_on: bool = False,
+        section_values: dict[str, str] | None = None,
     ) -> Task:
         task = self._find_by_selector(selector, include_trash=False)
 
@@ -418,6 +459,10 @@ class TaskService:
         if depends_on:
             dep_ids = self._resolve_dependency_refs(depends_on)
             task.metadata.depends_on = sorted(set([*task.metadata.depends_on, *dep_ids]))
+
+        if section_values:
+            sections = storage.resolve_task_body_sections(self.tasks_root)
+            task.body = _render_task_body(sections, section_values=section_values)
 
         snapshot = self._snapshot_with(task)
         self._validate_and_persist_snapshot(snapshot)

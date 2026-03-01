@@ -151,6 +151,7 @@ def select_text(
     message: str,
     *,
     default_value: str = "",
+    multiline: bool = False,
 ) -> str | None:
     """Return typed text, None on cancel, or raise SelectorUnavailableError for fallback."""
     _ensure_tty()
@@ -162,6 +163,7 @@ def select_text(
             default=default_value,
             vi_mode=False,
             mandatory=False,
+            multiline=multiline,
             raise_keyboard_interrupt=True,
         ).execute()
     except KeyboardInterrupt:
