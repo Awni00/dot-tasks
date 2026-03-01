@@ -1773,7 +1773,7 @@ def test_log_activity_interactive_prompts_for_note(monkeypatch: pytest.MonkeyPat
     runner.invoke(app, ["init", "--tasks-root", str(root)])
     runner.invoke(app, ["create", "log-prompted-note", "--tasks-root", str(root)])
     monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
-    monkeypatch.setattr("dot_tasks.cli.typer.prompt", lambda message: "Prompted note")
+    monkeypatch.setattr("dot_tasks.cli._safe_prompt", lambda message: "Prompted note")
 
     result = runner.invoke(
         app,

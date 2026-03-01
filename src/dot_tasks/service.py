@@ -388,10 +388,7 @@ class TaskService:
         if not task.plan_path.exists():
             task.plan_path.write_text(
                 "## Plan\n"
-                "1. Confirm scope and success criteria\n"
-                "2. Implement incrementally\n"
-                "3. Validate with tests/checks\n"
-                "4. Update activity and complete\n",
+                "TODO: Write complete plan generated during plan mode verbosely here.",
                 encoding="utf-8",
             )
         storage.append_activity(task, "human", "plan", "Task started")

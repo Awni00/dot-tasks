@@ -13,7 +13,7 @@ import typer
 
 from . import agents_snippet, render, storage
 from .models import Task, TaskError, TaskValidationError
-from .prompt_ui import choose_command, choose_task, create_form, init_config_form, update_form
+from .prompt_ui import _safe_prompt, choose_command, choose_task, create_form, init_config_form, update_form
 from .service import TaskService
 from . import service
 
@@ -1030,7 +1030,7 @@ def log_activity_cmd(
         if local_note is None:
             if not _can_prompt(interactive_enabled):
                 raise TaskValidationError("note is required in non-interactive mode")
-            local_note = typer.prompt("note")
+            local_note = _safe_prompt("note")
 
         task = svc.log_activity(selector, local_note, actor=actor)
         typer.echo(f"Logged activity: {task.metadata.task_name}")
@@ -1063,7 +1063,7 @@ def rename_cmd(
         if not target_name:
             if not _can_prompt(interactive_enabled):
                 raise TaskValidationError("new_task_name is required in non-interactive mode")
-            target_name = typer.prompt("new_task_name")
+            target_name = _safe_prompt("new_task_name")
         task = svc.rename_task(selector, target_name)
         typer.echo(f"Renamed: {task.metadata.task_name}")
 
