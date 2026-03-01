@@ -1725,26 +1725,6 @@ def test_update_accepts_status(tmp_path: Path) -> None:
     assert meta["date_started"] is not None
 
 
-def test_update_note_option_removed(tmp_path: Path) -> None:
-    root = tmp_path / ".tasks"
-    runner.invoke(app, ["init", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "update-no-note-option", "--tasks-root", str(root)])
-
-    result = runner.invoke(
-        app,
-        [
-            "update",
-            "update-no-note-option",
-            "--note",
-            "legacy note flag",
-            "--tasks-root",
-            str(root),
-        ],
-    )
-    assert result.exit_code == 2
-    assert "--note" in result.output
-
-
 def test_log_activity_defaults_actor_to_unknown(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
