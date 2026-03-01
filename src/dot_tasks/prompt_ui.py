@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 import typer
 
@@ -444,6 +444,7 @@ def create_form(
     dependency_options: list[tuple[str, str]] | None = None,
     tag_options: list[tuple[str, str]] | None = None,
     task_body_sections: list[dict[str, str]] | None = None,
+    validate_depends_on: Callable[[list[str]], None] | None = None,
 ) -> dict[str, Any] | None:
     dep_options = dependency_options or []
     available_tags = tag_options or []
@@ -500,14 +501,22 @@ def create_form(
         if should_set_depends is None:
             return None
         if should_set_depends:
-            selected_depends = _prompt_depends_on_choice(
-                "depends_on selectors",
-                dep_options,
-                default_values=[],
-            )
-            if selected_depends is None:
-                return None
-            depends_on = selected_depends
+            while True:
+                selected_depends = _prompt_depends_on_choice(
+                    "depends_on selectors",
+                    dep_options,
+                    default_values=[],
+                )
+                if selected_depends is None:
+                    return None
+                if validate_depends_on is not None:
+                    try:
+                        validate_depends_on(selected_depends)
+                    except Exception as e:
+                        typer.echo(f"Error: {e}", err=True)
+                        continue
+                depends_on = selected_depends
+                break
         else:
             depends_on = []
     return {
@@ -528,6 +537,7 @@ def update_form(
     tag_options: list[tuple[str, str]] | None = None,
     task_body_sections: list[dict[str, str]] | None = None,
     current_section_values: dict[str, str] | None = None,
+    validate_depends_on: Callable[[list[str]], None] | None = None,
 ) -> dict[str, Any] | None:
     dep_options = dependency_options or []
     available_tags = tag_options or []
@@ -582,15 +592,23 @@ def update_form(
         if should_update_depends is None:
             return None
         if should_update_depends:
-            selected_depends = _prompt_depends_on_choice(
-                "depends_on selectors (replaces current selection)",
-                dep_options,
-                default_values=task.metadata.depends_on,
-            )
-            if selected_depends is None:
-                return None
-            depends_on = selected_depends
-            replace_depends_on = True
+            while True:
+                selected_depends = _prompt_depends_on_choice(
+                    "depends_on selectors (replaces current selection)",
+                    dep_options,
+                    default_values=task.metadata.depends_on,
+                )
+                if selected_depends is None:
+                    return None
+                if validate_depends_on is not None:
+                    try:
+                        validate_depends_on(selected_depends)
+                    except Exception as e:
+                        typer.echo(f"Error: {e}", err=True)
+                        continue
+                depends_on = selected_depends
+                replace_depends_on = True
+                break
     return {
         "priority": None if priority == "__keep__" else priority,
         "effort": None if effort == "__keep__" else effort,

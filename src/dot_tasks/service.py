@@ -196,6 +196,54 @@ class TaskService:
         for task in tasks:
             task.metadata.blocked_by = sorted(blocked_by[task.metadata.task_id])
 
+    def check_circular_dependencies(self, task_id: str | None, extra_depends_on: list[str]) -> None:
+        """Validate if adding extra_depends_on creates a cycle."""
+        if not extra_depends_on:
+            return
+
+        tasks = self._all_active()
+        try:
+            resolved_extras = self._resolve_dependency_refs(extra_depends_on)
+        except TaskNotFoundError:
+            return
+
+        graph: dict[str, list[str]] = {}
+        for task in tasks:
+            tid = task.metadata.task_id
+            if tid == task_id:
+                graph[tid] = sorted(set([*task.metadata.depends_on, *resolved_extras]))
+            else:
+                graph[tid] = list(task.metadata.depends_on)
+
+        dummy_id = task_id or "__new_task__"
+        if dummy_id not in graph:
+            graph[dummy_id] = resolved_extras
+
+        for tid, deps in graph.items():
+            for dep in deps:
+                if dep == tid:
+                    raise TaskValidationError(f"Task cannot depend on itself")
+
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def dfs(node: str, stack: list[str]) -> None:
+            if node in visiting:
+                cycle = " -> ".join(stack + [node])
+                raise TaskValidationError(f"Dependency cycle detected: {cycle}")
+            if node in visited:
+                return
+            if node not in graph:
+                return
+            visiting.add(node)
+            for dep in graph[node]:
+                dfs(dep, stack + [node])
+            visiting.remove(node)
+            visited.add(node)
+
+        for node in graph:
+            dfs(node, [])
+
     def _persist_tasks(self, tasks: Iterable[Task]) -> None:
         for task in tasks:
             storage.write_task(task)

@@ -682,6 +682,7 @@ def create_cmd(
                 dependency_options=dependency_options,
                 tag_options=tag_options,
                 task_body_sections=task_body_sections,
+                validate_depends_on=lambda deps: svc.check_circular_dependencies(None, deps),
             )
             if form is None:
                 _exit_canceled(1)
@@ -973,6 +974,7 @@ def update_cmd(
                 tag_options=tag_options,
                 task_body_sections=task_body_sections,
                 current_section_values=current_section_values,
+                validate_depends_on=lambda deps: svc.check_circular_dependencies(selected_task.metadata.task_id, deps),
             )
             if form is None:
                 _exit_canceled(1)
