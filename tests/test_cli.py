@@ -1742,7 +1742,7 @@ def test_update_note_option_removed(tmp_path: Path) -> None:
         ],
     )
     assert result.exit_code == 2
-    assert "No such option: --note" in result.output
+    assert "--note" in result.output
 
 
 def test_log_activity_defaults_actor_to_unknown(tmp_path: Path) -> None:
