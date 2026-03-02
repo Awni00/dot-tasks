@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -649,11 +650,63 @@ def test_select_text_runtime_error_raises_unavailable(monkeypatch: pytest.Monkey
         selector_ui.select_text("task_name", default_value="x")
 
 
+def test_select_text_scopes_prompt_toolkit_no_cpr_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Purpose: ensure selector calls run with CPR probing disabled and env is restored.
+    class _AssertInquirer:
+        def text(self, **kwargs):
+            assert os.environ.get("PROMPT_TOOLKIT_NO_CPR") == "1"
+            return _FakePrompt(result="typed value")
+
+    monkeypatch.setattr(selector_ui, "_ensure_tty", lambda: None)
+    monkeypatch.setattr(selector_ui, "_inquirer", lambda: _AssertInquirer())
+    monkeypatch.delenv("PROMPT_TOOLKIT_NO_CPR", raising=False)
+
+    assert selector_ui.select_text("task_name", default_value="x") == "typed value"
+    assert os.environ.get("PROMPT_TOOLKIT_NO_CPR") is None
+
+
+def test_select_text_multiline_uses_inquirer(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Purpose: keep multiline editor behavior through InquirerPy text prompt.
+    monkeypatch.setattr(selector_ui, "_ensure_tty", lambda: None)
+    fake = _FakeInquirer(text_result="typed value")
+    monkeypatch.setattr(selector_ui, "_inquirer", lambda: fake)
+
+    value = selector_ui.select_text("summary", default_value="- TODO", multiline=True)
+
+    assert value == "typed value"
+    assert fake.last_text_kwargs is not None
+    assert fake.last_text_kwargs["multiline"] is True
+
+
+def test_no_cpr_env_sets_and_restores(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Purpose: ensure CPR suppression is scoped to one prompt invocation.
+    monkeypatch.delenv("PROMPT_TOOLKIT_NO_CPR", raising=False)
+    assert os.environ.get("PROMPT_TOOLKIT_NO_CPR") is None
+    with selector_ui._no_cpr_env():
+        assert os.environ.get("PROMPT_TOOLKIT_NO_CPR") == "1"
+    assert os.environ.get("PROMPT_TOOLKIT_NO_CPR") is None
+
+
 def test_safe_prompt_uses_selector_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(prompt_ui, "select_text", lambda message, default_value="", multiline=False: "value-from-selector")
     monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: pytest.fail("fallback prompt used"))
 
     assert prompt_ui._safe_prompt("summary", default="default") == "value-from-selector"
+
+
+def test_safe_prompt_multiline_uses_selector_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Purpose: keep multiline prompts on the InquirerPy path when selector is available.
+    monkeypatch.setattr(
+        prompt_ui,
+        "select_text",
+        lambda message, default_value="", multiline=False: "value-from-selector",
+    )
+    monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: pytest.fail("fallback prompt used"))
+
+    assert (
+        prompt_ui._safe_prompt("Summary (Esc+Enter to submit)", default="- TODO", multiline=True)
+        == "value-from-selector"
+    )
 
 
 def test_safe_prompt_falls_back_to_typer_on_selector_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -667,6 +720,32 @@ def test_safe_prompt_falls_back_to_typer_on_selector_unavailable(monkeypatch: py
     monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: "value-from-typer")
 
     assert prompt_ui._safe_prompt("summary", default="default") == "value-from-typer"
+
+
+def test_safe_prompt_multiline_fallback_strips_esc_enter_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Purpose: avoid showing multiline-only instructions when fallback uses single-line typer input.
+    monkeypatch.setattr(
+        prompt_ui,
+        "select_text",
+        lambda message, default_value="", multiline=False: (_ for _ in ()).throw(
+            selector_ui.SelectorUnavailableError("fallback")
+        ),
+    )
+    captured: dict[str, str] = {}
+
+    def _fake_prompt(message: str, default: str = "") -> str:
+        captured["message"] = message
+        return "value-from-typer"
+
+    monkeypatch.setattr(prompt_ui.typer, "prompt", _fake_prompt)
+
+    value = prompt_ui._safe_prompt(
+        "Acceptance Criteria (Esc+Enter to submit)",
+        default="- TODO",
+        multiline=True,
+    )
+    assert value == "value-from-typer"
+    assert captured["message"] == "Acceptance Criteria"
 
 
 def test_safe_prompt_returns_none_when_typer_aborts(monkeypatch: pytest.MonkeyPatch) -> None:

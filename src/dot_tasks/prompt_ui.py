@@ -36,8 +36,12 @@ def _safe_prompt(message: str, *, default: str = "", multiline: bool = False) ->
     else:
         return selected
 
+    fallback_message = message
+    if multiline:
+        fallback_message = message.replace(" (Esc+Enter to submit)", "")
+
     try:
-        return typer.prompt(message, default=default)
+        return typer.prompt(fallback_message, default=default)
     except (typer.Abort, KeyboardInterrupt, EOFError):
         return None
 

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
+import os
 import sys
 
 
@@ -111,6 +113,20 @@ def _inquirer():
     return inquirer
 
 
+@contextmanager
+def _no_cpr_env():
+    """Disable prompt-toolkit CPR probing for this prompt invocation."""
+    previous = os.environ.get("PROMPT_TOOLKIT_NO_CPR")
+    os.environ["PROMPT_TOOLKIT_NO_CPR"] = "1"
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("PROMPT_TOOLKIT_NO_CPR", None)
+        else:
+            os.environ["PROMPT_TOOLKIT_NO_CPR"] = previous
+
+
 def select_one(
     title: str,
     options: list[tuple[str, str]],
@@ -125,16 +141,17 @@ def select_one(
     choices = [_SelectionOption(value=value, label=label) for value, label in options]
     inquirer = _inquirer()
     try:
-        result = inquirer.select(
-            message=title,
-            choices=[{"name": item.label, "value": item.value} for item in choices],
-            default=default_value,
-            pointer=">",
-            # instruction="(up/down to move, enter to select, ctrl-c to cancel)",
-            vi_mode=False,
-            mandatory=False,
-            raise_keyboard_interrupt=True,
-        ).execute()
+        with _no_cpr_env():
+            result = inquirer.select(
+                message=title,
+                choices=[{"name": item.label, "value": item.value} for item in choices],
+                default=default_value,
+                pointer=">",
+                # instruction="(up/down to move, enter to select, ctrl-c to cancel)",
+                vi_mode=False,
+                mandatory=False,
+                raise_keyboard_interrupt=True,
+            ).execute()
     except KeyboardInterrupt:
         return None
     except EOFError:
@@ -158,14 +175,15 @@ def select_text(
 
     inquirer = _inquirer()
     try:
-        result = inquirer.text(
-            message=message,
-            default=default_value,
-            vi_mode=False,
-            mandatory=False,
-            multiline=multiline,
-            raise_keyboard_interrupt=True,
-        ).execute()
+        with _no_cpr_env():
+            result = inquirer.text(
+                message=message,
+                default=default_value,
+                vi_mode=False,
+                mandatory=False,
+                multiline=multiline,
+                raise_keyboard_interrupt=True,
+            ).execute()
     except KeyboardInterrupt:
         return None
     except EOFError:
@@ -192,14 +210,15 @@ def select_fuzzy(
     choices = [_SelectionOption(value=value, label=label) for value, label in options]
     inquirer = _inquirer()
     try:
-        result = inquirer.fuzzy(
-            message=title,
-            choices=[{"name": item.label, "value": item.value} for item in choices],
-            default=default_value,
-            vi_mode=False,
-            mandatory=False,
-            raise_keyboard_interrupt=True,
-        ).execute()
+        with _no_cpr_env():
+            result = inquirer.fuzzy(
+                message=title,
+                choices=[{"name": item.label, "value": item.value} for item in choices],
+                default=default_value,
+                vi_mode=False,
+                mandatory=False,
+                raise_keyboard_interrupt=True,
+            ).execute()
     except KeyboardInterrupt:
         return None
     except EOFError:
@@ -227,33 +246,34 @@ def select_fuzzy_many(
     choices = [_SelectionOption(value=value, label=label) for value, label in options]
     inquirer = _inquirer()
     try:
-        prompt = inquirer.fuzzy(
-            message=title,
-            choices=[
-                {
-                    "name": item.label,
-                    "value": item.value,
-                    "enabled": item.value in defaults,
-                }
-                for item in choices
-            ],
-            multiselect=True,
-            instruction="(space/tab to toggle, enter to submit, ctrl-c to cancel)",
-            marker="[x]",
-            marker_pl="[ ]",
-            # InquirerPy fuzzy prompt disables space-toggle by default so users can type
-            # spaces in the query; explicitly bind it for dependency multiselect UX.
-            keybindings={
-                "toggle": [{"key": "space"}],
-                "toggle-down": [{"key": "c-i"}],  # tab
-                "toggle-up": [{"key": "s-tab"}],
-            },
-            vi_mode=False,
-            mandatory=False,
-            raise_keyboard_interrupt=True,
-        )
-        _bind_fuzzy_submit_only(prompt)
-        selected = prompt.execute()
+        with _no_cpr_env():
+            prompt = inquirer.fuzzy(
+                message=title,
+                choices=[
+                    {
+                        "name": item.label,
+                        "value": item.value,
+                        "enabled": item.value in defaults,
+                    }
+                    for item in choices
+                ],
+                multiselect=True,
+                instruction="(space/tab to toggle, enter to submit, ctrl-c to cancel)",
+                marker="[x]",
+                marker_pl="[ ]",
+                # InquirerPy fuzzy prompt disables space-toggle by default so users can type
+                # spaces in the query; explicitly bind it for dependency multiselect UX.
+                keybindings={
+                    "toggle": [{"key": "space"}],
+                    "toggle-down": [{"key": "c-i"}],  # tab
+                    "toggle-up": [{"key": "s-tab"}],
+                },
+                vi_mode=False,
+                mandatory=False,
+                raise_keyboard_interrupt=True,
+            )
+            _bind_fuzzy_submit_only(prompt)
+            selected = prompt.execute()
     except KeyboardInterrupt:
         return None
     except EOFError:
@@ -282,21 +302,22 @@ def select_many(
     choices = [_SelectionOption(value=value, label=label) for value, label in options]
     inquirer = _inquirer()
     try:
-        selected = inquirer.checkbox(
-            message=title,
-            choices=[
-                {
-                    "name": item.label,
-                    "value": item.value,
-                    "enabled": item.value in defaults,
-                }
-                for item in choices
-            ],
-            instruction="(space to toggle, enter to submit, ctrl-c to cancel)",
-            vi_mode=False,
-            mandatory=False,
-            raise_keyboard_interrupt=True,
-        ).execute()
+        with _no_cpr_env():
+            selected = inquirer.checkbox(
+                message=title,
+                choices=[
+                    {
+                        "name": item.label,
+                        "value": item.value,
+                        "enabled": item.value in defaults,
+                    }
+                    for item in choices
+                ],
+                instruction="(space to toggle, enter to submit, ctrl-c to cancel)",
+                vi_mode=False,
+                mandatory=False,
+                raise_keyboard_interrupt=True,
+            ).execute()
     except KeyboardInterrupt:
         return None
     except EOFError:
