@@ -186,7 +186,8 @@ def test_render_dependency_graph_tree_marks_shared_nodes() -> None:
     output = render.render_dependency_graph_tree_plain(graph)
     assert "Dependency Graph | mode=tree | scope=todo,doing" in output
     assert "nodes=5 edges=4 roots=2" in output
-    assert "package-wheel (t-2) [todo] [deps: blocked(1)] (shared)" in output
+    assert "• package-wheel (t-2) [todo] [deps: blocked(1)] (shared)" in output
+    assert "├─ • package-wheel (t-2) [todo] [deps: blocked(1)]" in output
 
 
 def test_render_dependency_graph_tree_shows_hidden_dependency_count() -> None:
@@ -215,7 +216,7 @@ def test_render_dependency_graph_tree_shows_hidden_dependency_count() -> None:
     )
 
     output = render.render_dependency_graph_tree_plain(graph)
-    assert "release-cli (t-1) [doing] [deps: blocked(1)] (+1 hidden)" in output
+    assert "• release-cli (t-1) [doing] [deps: blocked(1)] (+1 hidden)" in output
 
 
 def test_render_dependency_graph_layers_layout_and_order() -> None:
@@ -268,12 +269,96 @@ def test_render_dependency_graph_layers_layout_and_order() -> None:
     output = render.render_dependency_graph_layers_plain(graph)
     assert "Dependency Graph | mode=layers | scope=todo,doing" in output
     assert "nodes=5 edges=4 layers=3" in output
-    assert "L0 prerequisites" in output
-    assert "- generate-changelog (t-4) [doing] [deps: ready]" in output
-    assert "- finalize-readme (t-3) [todo] [deps: ready]" in output
+    assert "L0 (no dependencies)" in output
+    assert "• generate-changelog (t-4) [doing] [deps: ready]" in output
+    assert "• finalize-readme (t-3) [todo] [deps: ready]" in output
     assert "L1 depends on L0" in output
-    assert "- package-wheel (t-2) [todo] [deps: blocked(1)]" in output
+    assert "• package-wheel (t-2) [todo] [deps: blocked(1)]" in output
     assert "L2 depends on L1" in output
+
+
+def test_render_dependency_graph_tree_rich_contains_expected_tokens() -> None:
+    # Purpose: ensure rich tree output preserves the intended node text markers and connectors.
+    pytest.importorskip("rich")
+    from rich.console import Console
+
+    graph = _graph(
+        [
+            DependencyGraphNode(
+                task_id="t-1",
+                task_name="release-cli",
+                status="doing",
+                priority="p1",
+                effort="l",
+                depends_on=["t-2"],
+                hidden_depends_on=["t-9"],
+            ),
+            DependencyGraphNode(
+                task_id="t-2",
+                task_name="package-wheel",
+                status="todo",
+                priority="p2",
+                effort="m",
+            ),
+            DependencyGraphNode(
+                task_id="t-3",
+                task_name="publish-blog",
+                status="todo",
+                priority="p2",
+                effort="m",
+                depends_on=["t-2"],
+            ),
+        ],
+        root_ids=["t-1", "t-3"],
+        source_ids=["t-2"],
+    )
+
+    renderable = render.render_dependency_graph_tree_rich(graph)
+    console = Console(record=True, width=180, force_terminal=False, color_system=None)
+    console.print(renderable)
+    text = console.export_text()
+
+    assert "Dependency Graph | mode=tree | scope=todo,doing" in text
+    assert "• release-cli (t-1) [doing] [deps: blocked(1)] (+1 hidden)" in text
+    assert "└─ • package-wheel (t-2) [todo] [deps: ready] (shared)" in text
+
+
+def test_render_dependency_graph_layers_rich_contains_updated_l0_heading() -> None:
+    # Purpose: ensure rich layers output uses the updated L0 heading and bullet node rows.
+    pytest.importorskip("rich")
+    from rich.console import Console
+
+    graph = _graph(
+        [
+            DependencyGraphNode(
+                task_id="t-1",
+                task_name="base",
+                status="todo",
+                priority="p2",
+                effort="m",
+            ),
+            DependencyGraphNode(
+                task_id="t-2",
+                task_name="top",
+                status="doing",
+                priority="p1",
+                effort="m",
+                depends_on=["t-1"],
+            ),
+        ],
+        root_ids=["t-2"],
+        source_ids=["t-1"],
+    )
+
+    renderable = render.render_dependency_graph_layers_rich(graph)
+    console = Console(record=True, width=180, force_terminal=False, color_system=None)
+    console.print(renderable)
+    text = console.export_text()
+
+    assert "Dependency Graph | mode=layers | scope=todo,doing" in text
+    assert "L0 (no dependencies)" in text
+    assert "• base (t-1) [todo] [deps: ready]" in text
+    assert "L1 depends on L0" in text
 
 
 def test_render_task_detail_plain_header_first_layout(tmp_path: Path) -> None:

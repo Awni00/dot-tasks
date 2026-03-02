@@ -932,8 +932,8 @@ def test_view_tty_uses_rich_renderer(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert captured == ["RICH-DETAIL"]
 
 
-def test_graph_defaults_to_tree_and_excludes_done_scope(tmp_path: Path) -> None:
-    # Purpose: verify graph default mode is tree and default scope excludes completed tasks.
+def test_graph_defaults_to_tree_and_includes_done_direct_dependencies(tmp_path: Path) -> None:
+    # Purpose: verify default scope includes completed direct dependencies of active tasks.
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
     runner.invoke(app, ["create", "done-dep", "--tasks-root", str(root)])
@@ -946,8 +946,8 @@ def test_graph_defaults_to_tree_and_excludes_done_scope(tmp_path: Path) -> None:
     output = result.output
     assert "Dependency Graph | mode=tree | scope=todo,doing" in output
     assert "active-root (" in output
-    assert "done-dep (" not in output
-    assert "(+1 hidden)" in output
+    assert "done-dep (" in output
+    assert "(+1 hidden)" not in output
 
 
 def test_graph_layers_mode_renders_layers_header(tmp_path: Path) -> None:
@@ -961,17 +961,20 @@ def test_graph_layers_mode_renders_layers_header(tmp_path: Path) -> None:
     assert result.exit_code == 0
     output = result.output
     assert "Dependency Graph | mode=layers | scope=todo,doing" in output
-    assert "L0 prerequisites" in output
+    assert "L0 (no dependencies)" in output
     assert "L1 depends on L0" in output
 
 
 def test_graph_include_done_expands_scope(tmp_path: Path) -> None:
-    # Purpose: verify --include-done includes completed tasks in graph scope and output.
+    # Purpose: verify --include-done still expands to full done scope, including unrelated done tasks.
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
     runner.invoke(app, ["create", "done-dep", "--tasks-root", str(root)])
     runner.invoke(app, ["start", "done-dep", "--tasks-root", str(root)])
     runner.invoke(app, ["complete", "done-dep", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "done-unrelated", "--tasks-root", str(root)])
+    runner.invoke(app, ["start", "done-unrelated", "--tasks-root", str(root)])
+    runner.invoke(app, ["complete", "done-unrelated", "--tasks-root", str(root)])
     runner.invoke(app, ["create", "active-root", "--depends-on", "done-dep", "--tasks-root", str(root)])
 
     result = runner.invoke(app, ["graph", "--include-done", "--tasks-root", str(root)])
@@ -979,6 +982,51 @@ def test_graph_include_done_expands_scope(tmp_path: Path) -> None:
     output = result.output
     assert "Dependency Graph | mode=tree | scope=todo,doing,done" in output
     assert "done-dep (" in output
+    assert "done-unrelated (" in output
+
+
+def test_graph_default_scope_excludes_unrelated_done_tasks(tmp_path: Path) -> None:
+    # Purpose: verify default graph excludes completed tasks not referenced by active task dependencies.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "done-dep", "--tasks-root", str(root)])
+    runner.invoke(app, ["start", "done-dep", "--tasks-root", str(root)])
+    runner.invoke(app, ["complete", "done-dep", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "done-unrelated", "--tasks-root", str(root)])
+    runner.invoke(app, ["start", "done-unrelated", "--tasks-root", str(root)])
+    runner.invoke(app, ["complete", "done-unrelated", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "active-root", "--depends-on", "done-dep", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["graph", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    output = result.output
+    assert "done-dep (" in output
+    assert "done-unrelated (" not in output
+
+
+def test_graph_default_treats_done_dependencies_as_terminal_leaves(tmp_path: Path) -> None:
+    # Purpose: verify default scope does not expand dependencies of completed nodes.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "done-base", "--tasks-root", str(root)])
+    runner.invoke(app, ["start", "done-base", "--tasks-root", str(root)])
+    runner.invoke(app, ["complete", "done-base", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "done-dep", "--depends-on", "done-base", "--tasks-root", str(root)])
+    runner.invoke(app, ["start", "done-dep", "--tasks-root", str(root)])
+    runner.invoke(app, ["complete", "done-dep", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "active-root", "--depends-on", "done-dep", "--tasks-root", str(root)])
+
+    default_result = runner.invoke(app, ["graph", "--tasks-root", str(root)])
+    assert default_result.exit_code == 0
+    default_output = default_result.output
+    assert "done-dep (" in default_output
+    assert "done-base (" not in default_output
+
+    expanded_result = runner.invoke(app, ["graph", "--include-done", "--tasks-root", str(root)])
+    assert expanded_result.exit_code == 0
+    expanded_output = expanded_result.output
+    assert "done-dep (" in expanded_output
+    assert "done-base (" in expanded_output
 
 
 def test_graph_non_tty_uses_plain_renderer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

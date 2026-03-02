@@ -358,16 +358,32 @@ class TaskService:
     def build_dependency_graph(self, *, include_done: bool = False) -> DependencyGraph:
         tasks = self.list_tasks(status=None)
 
-        scoped_statuses = {"todo", "doing"}
-        scoped_tasks = [
-            task
-            for task in tasks
-            if include_done or task.metadata.status in scoped_statuses
-        ]
+        scoped_tasks: list[Task]
+        scoped_ids: set[str]
+        # Default graph scope: active tasks plus their direct dependencies.
+        # Completed dependencies are intentionally shown as terminal leaves to
+        # keep the default graph focused on active work.
+        if include_done:
+            scoped_tasks = list(tasks)
+            scoped_ids = {task.metadata.task_id for task in scoped_tasks}
+        else:
+            active_tasks = [task for task in tasks if task.metadata.status in {"todo", "doing"}]
+            active_ids = {task.metadata.task_id for task in active_tasks}
+            active_direct_dep_ids = {
+                dep_id
+                for task in active_tasks
+                for dep_id in task.metadata.depends_on
+            }
+            scoped_ids = active_ids.union(active_direct_dep_ids)
+            scoped_tasks = [
+                task
+                for task in tasks
+                if task.metadata.task_id in scoped_ids
+            ]
+
         if not scoped_tasks:
             return DependencyGraph(include_done=include_done)
 
-        scoped_ids = {task.metadata.task_id for task in scoped_tasks}
         scoped_order = {
             task.metadata.task_id: index
             for index, task in enumerate(scoped_tasks)
@@ -380,10 +396,13 @@ class TaskService:
         nodes: dict[str, DependencyGraphNode] = {}
         for task in scoped_tasks:
             task_id = task.metadata.task_id
-            scoped_deps = sorted(
-                {dep_id for dep_id in task.metadata.depends_on if dep_id in scoped_ids},
-                key=lambda dep_id: scoped_order[dep_id],
-            )
+            if not include_done and task.metadata.status == "completed":
+                scoped_deps = []
+            else:
+                scoped_deps = sorted(
+                    {dep_id for dep_id in task.metadata.depends_on if dep_id in scoped_ids},
+                    key=lambda dep_id: scoped_order[dep_id],
+                )
             hidden_deps = sorted(
                 {dep_id for dep_id in task.metadata.depends_on if dep_id not in scoped_ids},
                 key=lambda dep_id: all_order.get(dep_id, 10**9),
