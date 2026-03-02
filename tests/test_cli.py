@@ -9,6 +9,7 @@ import pytest
 from typer.testing import CliRunner
 import yaml
 
+from dot_tasks import cli
 from dot_tasks.cli import app
 
 
@@ -19,6 +20,24 @@ OSC8_LINK_RE = re.compile(r"\x1b\]8;;[^\x1b]*\x1b\\(.*?)\x1b\]8;;\x1b\\")
 @pytest.fixture(autouse=True)
 def _disable_skill_install_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("dot_tasks.cli._prompt_install_skill", lambda: False)
+
+
+def test_confirm_action_yes_returns_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Purpose: ensure affirmative selection from the InquirerPy-backed prompt returns True.
+    monkeypatch.setattr("dot_tasks.cli._prompt_yes_no", lambda title, *, default=False: True)
+    assert cli._confirm_action("Proceed?", default=False) is True
+
+
+def test_confirm_action_no_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Purpose: ensure negative selection from the InquirerPy-backed prompt returns False.
+    monkeypatch.setattr("dot_tasks.cli._prompt_yes_no", lambda title, *, default=False: False)
+    assert cli._confirm_action("Proceed?", default=True) is False
+
+
+def test_confirm_action_cancel_returns_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Purpose: preserve cancel semantics so interrupted/canceled prompt resolves to False.
+    monkeypatch.setattr("dot_tasks.cli._prompt_yes_no", lambda title, *, default=False: None)
+    assert cli._confirm_action("Proceed?", default=True) is False
 
 
 def _set_test_banner(monkeypatch: pytest.MonkeyPatch) -> str:
@@ -2007,5 +2026,4 @@ def test_update_interactive_form_retries_on_circular_dependency(
     result = runner.invoke(app, ["update", "task-a", "--tasks-root", str(root)])
     assert result.exit_code == 0
     assert call_count == 2
-
 

@@ -13,7 +13,15 @@ import typer
 
 from . import agents_snippet, render, storage
 from .models import Task, TaskError, TaskValidationError
-from .prompt_ui import _safe_prompt, choose_command, choose_task, create_form, init_config_form, update_form
+from .prompt_ui import (
+    _prompt_yes_no,
+    _safe_prompt,
+    choose_command,
+    choose_task,
+    create_form,
+    init_config_form,
+    update_form,
+)
 from .service import TaskService
 from . import service
 
@@ -373,10 +381,7 @@ def _append_agents_snippet(
 
 
 def _confirm_action(prompt: str, *, default: bool) -> bool:
-    try:
-        return bool(typer.confirm(prompt, default=default))
-    except (click.Abort, EOFError, KeyboardInterrupt):
-        return False
+    return bool(_prompt_yes_no(prompt, default=default))
 
 
 def _should_prompt_for_confirmation(*, nointeractive: bool, yes: bool) -> bool:
