@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Iterable
 
 from .models import (
+    DependencyGraph,
+    DependencyGraphNode,
     TASK_NAME_RE,
     VALID_EFFORTS,
     VALID_PRIORITIES,
@@ -22,6 +24,14 @@ from . import storage
 
 
 STATUS_SORT = {"todo": 0, "doing": 1, "completed": 2}
+
+
+def _task_order_key(task: Task) -> tuple[int, int, str]:
+    return (
+        STATUS_SORT.get(task.metadata.status, 99),
+        -int(task.metadata.date_created.replace("-", "")),
+        task.metadata.task_name,
+    )
 
 
 def _render_task_body(
@@ -344,6 +354,77 @@ class TaskService:
                 }
             )
         return rows
+
+    def build_dependency_graph(self, *, include_done: bool = False) -> DependencyGraph:
+        tasks = self.list_tasks(status=None)
+
+        scoped_statuses = {"todo", "doing"}
+        scoped_tasks = [
+            task
+            for task in tasks
+            if include_done or task.metadata.status in scoped_statuses
+        ]
+        if not scoped_tasks:
+            return DependencyGraph(include_done=include_done)
+
+        scoped_ids = {task.metadata.task_id for task in scoped_tasks}
+        scoped_order = {
+            task.metadata.task_id: index
+            for index, task in enumerate(scoped_tasks)
+        }
+        all_order = {
+            task.metadata.task_id: index
+            for index, task in enumerate(sorted(tasks, key=_task_order_key))
+        }
+
+        nodes: dict[str, DependencyGraphNode] = {}
+        for task in scoped_tasks:
+            task_id = task.metadata.task_id
+            scoped_deps = sorted(
+                {dep_id for dep_id in task.metadata.depends_on if dep_id in scoped_ids},
+                key=lambda dep_id: scoped_order[dep_id],
+            )
+            hidden_deps = sorted(
+                {dep_id for dep_id in task.metadata.depends_on if dep_id not in scoped_ids},
+                key=lambda dep_id: all_order.get(dep_id, 10**9),
+            )
+            nodes[task_id] = DependencyGraphNode(
+                task_id=task_id,
+                task_name=task.metadata.task_name,
+                status=task.metadata.status,
+                priority=task.metadata.priority,
+                effort=task.metadata.effort,
+                depends_on=scoped_deps,
+                hidden_depends_on=hidden_deps,
+            )
+
+        dependent_ids_by_node: dict[str, list[str]] = {task_id: [] for task_id in nodes}
+        for task_id, node in nodes.items():
+            for dep_id in node.depends_on:
+                dependent_ids_by_node[dep_id].append(task_id)
+
+        for dep_id in dependent_ids_by_node:
+            dependent_ids_by_node[dep_id] = sorted(
+                dependent_ids_by_node[dep_id],
+                key=lambda task_id: scoped_order[task_id],
+            )
+
+        root_ids = sorted(
+            [task_id for task_id, dependents in dependent_ids_by_node.items() if not dependents],
+            key=lambda task_id: scoped_order[task_id],
+        )
+        source_ids = sorted(
+            [task_id for task_id, node in nodes.items() if not node.depends_on],
+            key=lambda task_id: scoped_order[task_id],
+        )
+
+        return DependencyGraph(
+            nodes=nodes,
+            root_ids=root_ids,
+            source_ids=source_ids,
+            dependent_ids_by_node=dependent_ids_by_node,
+            include_done=include_done,
+        )
 
     def dependency_health(self, task: Task) -> tuple[int, list[Task]]:
         by_id = self._by_id(include_trash=False)

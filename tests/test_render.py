@@ -7,7 +7,7 @@ import re
 import pytest
 
 from dot_tasks import render
-from dot_tasks.models import Task, TaskMetadata
+from dot_tasks.models import DependencyGraph, DependencyGraphNode, Task, TaskMetadata
 
 OSC8_LINK_RE = re.compile(r"\x1b\]8;;[^\x1b]*\x1b\\(.*?)\x1b\]8;;\x1b\\")
 
@@ -33,6 +33,27 @@ def _task(name: str, status: str, priority: str, task_id: str, created: str) -> 
 
 def _columns(*items: tuple[str, int]) -> list[dict[str, int | str]]:
     return [{"name": name, "width": width} for name, width in items]
+
+
+def _graph(
+    nodes: list[DependencyGraphNode],
+    *,
+    root_ids: list[str],
+    source_ids: list[str],
+    include_done: bool = False,
+) -> DependencyGraph:
+    graph_nodes = {node.task_id: node for node in nodes}
+    dependent_ids_by_node = {node.task_id: [] for node in nodes}
+    for node in nodes:
+        for dep_id in node.depends_on:
+            dependent_ids_by_node[dep_id].append(node.task_id)
+    return DependencyGraph(
+        nodes=graph_nodes,
+        root_ids=root_ids,
+        source_ids=source_ids,
+        dependent_ids_by_node=dependent_ids_by_node,
+        include_done=include_done,
+    )
 
 
 def test_render_task_list_plain_shape_stable() -> None:
@@ -113,6 +134,146 @@ def test_render_task_list_rich_sections_and_labels() -> None:
     assert "p0" in text
     assert "p1" in text
     assert "p3" in text
+
+
+def test_render_dependency_graph_tree_marks_shared_nodes() -> None:
+    # Purpose: ensure tree mode marks repeated dependency nodes as shared across roots.
+    graph = _graph(
+        [
+            DependencyGraphNode(
+                task_id="t-1",
+                task_name="release-cli",
+                status="doing",
+                priority="p1",
+                effort="l",
+                depends_on=["t-2", "t-3"],
+            ),
+            DependencyGraphNode(
+                task_id="t-2",
+                task_name="package-wheel",
+                status="todo",
+                priority="p2",
+                effort="m",
+                depends_on=["t-4"],
+            ),
+            DependencyGraphNode(
+                task_id="t-3",
+                task_name="finalize-readme",
+                status="todo",
+                priority="p2",
+                effort="s",
+            ),
+            DependencyGraphNode(
+                task_id="t-4",
+                task_name="generate-changelog",
+                status="doing",
+                priority="p2",
+                effort="m",
+            ),
+            DependencyGraphNode(
+                task_id="t-5",
+                task_name="publish-blog",
+                status="todo",
+                priority="p2",
+                effort="m",
+                depends_on=["t-2"],
+            ),
+        ],
+        root_ids=["t-1", "t-5"],
+        source_ids=["t-3", "t-4"],
+    )
+
+    output = render.render_dependency_graph_tree_plain(graph)
+    assert "Dependency Graph | mode=tree | scope=todo,doing" in output
+    assert "nodes=5 edges=4 roots=2" in output
+    assert "package-wheel (t-2) [todo] [deps: blocked(1)] (shared)" in output
+
+
+def test_render_dependency_graph_tree_shows_hidden_dependency_count() -> None:
+    # Purpose: ensure filtered dependencies are reported with (+N hidden) in tree nodes.
+    graph = _graph(
+        [
+            DependencyGraphNode(
+                task_id="t-1",
+                task_name="release-cli",
+                status="doing",
+                priority="p1",
+                effort="l",
+                depends_on=["t-2"],
+                hidden_depends_on=["t-9"],
+            ),
+            DependencyGraphNode(
+                task_id="t-2",
+                task_name="package-wheel",
+                status="todo",
+                priority="p2",
+                effort="m",
+            ),
+        ],
+        root_ids=["t-1"],
+        source_ids=["t-2"],
+    )
+
+    output = render.render_dependency_graph_tree_plain(graph)
+    assert "release-cli (t-1) [doing] [deps: blocked(1)] (+1 hidden)" in output
+
+
+def test_render_dependency_graph_layers_layout_and_order() -> None:
+    # Purpose: ensure layers mode groups nodes by prerequisite depth with stable ordering.
+    graph = _graph(
+        [
+            DependencyGraphNode(
+                task_id="t-4",
+                task_name="generate-changelog",
+                status="doing",
+                priority="p2",
+                effort="m",
+            ),
+            DependencyGraphNode(
+                task_id="t-3",
+                task_name="finalize-readme",
+                status="todo",
+                priority="p2",
+                effort="s",
+            ),
+            DependencyGraphNode(
+                task_id="t-2",
+                task_name="package-wheel",
+                status="todo",
+                priority="p2",
+                effort="m",
+                depends_on=["t-4"],
+            ),
+            DependencyGraphNode(
+                task_id="t-5",
+                task_name="publish-blog",
+                status="todo",
+                priority="p2",
+                effort="m",
+                depends_on=["t-2"],
+            ),
+            DependencyGraphNode(
+                task_id="t-1",
+                task_name="release-cli",
+                status="doing",
+                priority="p1",
+                effort="l",
+                depends_on=["t-2", "t-3"],
+            ),
+        ],
+        root_ids=["t-5", "t-1"],
+        source_ids=["t-4", "t-3"],
+    )
+
+    output = render.render_dependency_graph_layers_plain(graph)
+    assert "Dependency Graph | mode=layers | scope=todo,doing" in output
+    assert "nodes=5 edges=4 layers=3" in output
+    assert "L0 prerequisites" in output
+    assert "- generate-changelog (t-4) [doing] [deps: ready]" in output
+    assert "- finalize-readme (t-3) [todo] [deps: ready]" in output
+    assert "L1 depends on L0" in output
+    assert "- package-wheel (t-2) [todo] [deps: blocked(1)]" in output
+    assert "L2 depends on L1" in output
 
 
 def test_render_task_detail_plain_header_first_layout(tmp_path: Path) -> None:

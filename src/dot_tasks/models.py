@@ -60,6 +60,26 @@ class Task:
         return self.task_dir / "plan.md"
 
 
+@dataclass(slots=True)
+class DependencyGraphNode:
+    task_id: str
+    task_name: str
+    status: str
+    priority: str
+    effort: str
+    depends_on: list[str] = field(default_factory=list)
+    hidden_depends_on: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class DependencyGraph:
+    nodes: dict[str, DependencyGraphNode] = field(default_factory=dict)
+    root_ids: list[str] = field(default_factory=list)
+    source_ids: list[str] = field(default_factory=list)
+    dependent_ids_by_node: dict[str, list[str]] = field(default_factory=dict)
+    include_done: bool = False
+
+
 class TaskError(Exception):
     """Base error for task operations."""
 

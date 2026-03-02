@@ -67,6 +67,10 @@ def _can_render_rich_detail_output() -> bool:
     return sys.stdout.isatty()
 
 
+def _can_render_rich_graph_output() -> bool:
+    return sys.stdout.isatty()
+
+
 def _can_render_banner() -> bool:
     return sys.stdout.isatty()
 
@@ -905,6 +909,42 @@ def view_cmd(
                         enable_links=_can_interact(),
                     )
                 )
+
+    _run_and_handle(_inner)
+
+
+@app.command("graph")
+def graph_cmd(
+    mode: Annotated[Literal["tree", "layers"], typer.Option("--mode")] = "tree",
+    include_done: Annotated[
+        bool,
+        typer.Option("--include-done", help="Include completed tasks in graph scope"),
+    ] = False,
+    nointeractive: NoInteractiveOption = False,
+    tasks_root: TasksRootOption = None,
+) -> None:
+    """Show dependency graph for active tasks."""
+
+    def _inner() -> None:
+        _ = nointeractive
+        svc = _service(tasks_root)
+        graph = svc.build_dependency_graph(include_done=include_done)
+
+        if not graph.nodes:
+            typer.echo("No tasks found.")
+            return
+
+        if mode == "tree":
+            if _can_render_rich_graph_output():
+                _print_rich(render.render_dependency_graph_tree_rich(graph))
+            else:
+                typer.echo(render.render_dependency_graph_tree_plain(graph))
+            return
+
+        if _can_render_rich_graph_output():
+            _print_rich(render.render_dependency_graph_layers_rich(graph))
+        else:
+            typer.echo(render.render_dependency_graph_layers_plain(graph))
 
     _run_and_handle(_inner)
 

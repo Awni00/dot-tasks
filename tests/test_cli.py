@@ -932,6 +932,109 @@ def test_view_tty_uses_rich_renderer(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert captured == ["RICH-DETAIL"]
 
 
+def test_graph_defaults_to_tree_and_excludes_done_scope(tmp_path: Path) -> None:
+    # Purpose: verify graph default mode is tree and default scope excludes completed tasks.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "done-dep", "--tasks-root", str(root)])
+    runner.invoke(app, ["start", "done-dep", "--tasks-root", str(root)])
+    runner.invoke(app, ["complete", "done-dep", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "active-root", "--depends-on", "done-dep", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["graph", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    output = result.output
+    assert "Dependency Graph | mode=tree | scope=todo,doing" in output
+    assert "active-root (" in output
+    assert "done-dep (" not in output
+    assert "(+1 hidden)" in output
+
+
+def test_graph_layers_mode_renders_layers_header(tmp_path: Path) -> None:
+    # Purpose: verify --mode layers switches to layered graph rendering output.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "base-layer", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "top-layer", "--depends-on", "base-layer", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["graph", "--mode", "layers", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    output = result.output
+    assert "Dependency Graph | mode=layers | scope=todo,doing" in output
+    assert "L0 prerequisites" in output
+    assert "L1 depends on L0" in output
+
+
+def test_graph_include_done_expands_scope(tmp_path: Path) -> None:
+    # Purpose: verify --include-done includes completed tasks in graph scope and output.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "done-dep", "--tasks-root", str(root)])
+    runner.invoke(app, ["start", "done-dep", "--tasks-root", str(root)])
+    runner.invoke(app, ["complete", "done-dep", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "active-root", "--depends-on", "done-dep", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["graph", "--include-done", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    output = result.output
+    assert "Dependency Graph | mode=tree | scope=todo,doing,done" in output
+    assert "done-dep (" in output
+
+
+def test_graph_non_tty_uses_plain_renderer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # Purpose: verify non-TTY graph output path calls plain tree renderer.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "plain-graph", "--tasks-root", str(root)])
+
+    monkeypatch.setattr("dot_tasks.cli._can_render_rich_graph_output", lambda: False)
+    monkeypatch.setattr(
+        "dot_tasks.cli.render.render_dependency_graph_tree_plain",
+        lambda graph: "PLAIN-GRAPH",
+    )
+    monkeypatch.setattr(
+        "dot_tasks.cli.render.render_dependency_graph_tree_rich",
+        lambda graph: pytest.fail("rich graph renderer should not run"),
+    )
+
+    result = runner.invoke(app, ["graph", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert "PLAIN-GRAPH" in result.output
+
+
+def test_graph_tty_uses_rich_renderer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # Purpose: verify TTY graph output path calls rich tree renderer.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "rich-graph", "--tasks-root", str(root)])
+
+    monkeypatch.setattr("dot_tasks.cli._can_render_rich_graph_output", lambda: True)
+    monkeypatch.setattr(
+        "dot_tasks.cli.render.render_dependency_graph_tree_plain",
+        lambda graph: pytest.fail("plain graph renderer should not run"),
+    )
+    monkeypatch.setattr(
+        "dot_tasks.cli.render.render_dependency_graph_tree_rich",
+        lambda graph: "RICH-GRAPH",
+    )
+    captured: list[object] = []
+    monkeypatch.setattr("dot_tasks.cli._print_rich", lambda renderable: captured.append(renderable))
+
+    result = runner.invoke(app, ["graph", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert captured == ["RICH-GRAPH"]
+
+
+def test_graph_empty_scope_prints_no_tasks_found(tmp_path: Path) -> None:
+    # Purpose: verify graph command exits cleanly with no tasks message on empty scope.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["graph", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert result.output.strip() == "No tasks found."
+
+
 def test_list_grouped_sorted(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
@@ -2026,4 +2129,3 @@ def test_update_interactive_form_retries_on_circular_dependency(
     result = runner.invoke(app, ["update", "task-a", "--tasks-root", str(root)])
     assert result.exit_code == 0
     assert call_count == 2
-

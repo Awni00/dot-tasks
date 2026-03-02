@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Iterable
 
-from .models import Task
+from .models import DependencyGraph, Task
 
 
 STATUS_ORDER = ("todo", "doing", "completed")
@@ -200,6 +200,149 @@ def render_task_list_json(tasks: Iterable[Task], unmet_counts: dict[str, int]) -
         item["path"] = str(task.task_dir)
         payload.append(item)
     return json.dumps(payload, indent=2)
+
+
+def _graph_scope_label(graph: DependencyGraph) -> str:
+    if graph.include_done:
+        return "todo,doing,done"
+    return "todo,doing"
+
+
+def _graph_node_order(graph: DependencyGraph) -> dict[str, int]:
+    return {task_id: index for index, task_id in enumerate(graph.nodes.keys())}
+
+
+def _graph_blocked_count(graph: DependencyGraph, task_id: str) -> int:
+    node = graph.nodes[task_id]
+    count = 0
+    for dep_id in node.depends_on:
+        dep = graph.nodes.get(dep_id)
+        if dep is None or dep.status != "completed":
+            count += 1
+    return count
+
+
+def _graph_node_label(graph: DependencyGraph, task_id: str) -> str:
+    node = graph.nodes[task_id]
+    blocked = _graph_blocked_count(graph, task_id)
+    deps_label = "ready" if blocked <= 0 else f"blocked({blocked})"
+    hidden_suffix = (
+        f" (+{len(node.hidden_depends_on)} hidden)"
+        if node.hidden_depends_on
+        else ""
+    )
+    return (
+        f"{node.task_name} ({node.task_id}) [{node.status}] [deps: {deps_label}]"
+        f"{hidden_suffix}"
+    )
+
+
+def render_dependency_graph_tree_plain(graph: DependencyGraph) -> str:
+    if not graph.nodes:
+        return "No tasks found."
+
+    total_edges = sum(len(node.depends_on) for node in graph.nodes.values())
+    roots = graph.root_ids or list(graph.nodes.keys())
+    order = _graph_node_order(graph)
+    roots = sorted(roots, key=lambda task_id: order.get(task_id, 10**9))
+
+    lines = [
+        f"Dependency Graph | mode=tree | scope={_graph_scope_label(graph)}",
+        f"nodes={len(graph.nodes)} edges={total_edges} roots={len(roots)}",
+        "",
+    ]
+
+    seen: set[str] = set()
+
+    def walk(task_id: str, prefix: str, is_last: bool, *, is_root: bool = False) -> None:
+        label = _graph_node_label(graph, task_id)
+        repeated = task_id in seen
+        if repeated:
+            label = f"{label} (shared)"
+        branch = "" if is_root else ("└─ " if is_last else "├─ ")
+        lines.append(f"{prefix}{branch}{label}")
+        if repeated:
+            return
+
+        seen.add(task_id)
+        children = graph.nodes[task_id].depends_on
+        if not children:
+            return
+
+        child_prefix = prefix + ("" if is_root else ("   " if is_last else "│  "))
+        for index, dep_id in enumerate(children):
+            walk(
+                dep_id,
+                child_prefix,
+                index == len(children) - 1,
+                is_root=False,
+            )
+
+    for index, root_id in enumerate(roots):
+        walk(root_id, "", True, is_root=True)
+        if index < len(roots) - 1:
+            lines.append("")
+
+    return "\n".join(lines)
+
+
+def render_dependency_graph_tree_rich(graph: DependencyGraph):
+    from rich.text import Text
+
+    return Text(render_dependency_graph_tree_plain(graph))
+
+
+def render_dependency_graph_layers_plain(graph: DependencyGraph) -> str:
+    if not graph.nodes:
+        return "No tasks found."
+
+    order = _graph_node_order(graph)
+    total_edges = sum(len(node.depends_on) for node in graph.nodes.values())
+    memo: dict[str, int] = {}
+
+    def depth(task_id: str) -> int:
+        if task_id in memo:
+            return memo[task_id]
+        deps = graph.nodes[task_id].depends_on
+        if not deps:
+            memo[task_id] = 0
+            return 0
+        value = 1 + max(depth(dep_id) for dep_id in deps)
+        memo[task_id] = value
+        return value
+
+    layers: dict[int, list[str]] = {}
+    for task_id in graph.nodes:
+        level = depth(task_id)
+        layers.setdefault(level, []).append(task_id)
+
+    for level in layers:
+        layers[level] = sorted(layers[level], key=lambda task_id: order.get(task_id, 10**9))
+
+    layer_ids = sorted(layers)
+    lines = [
+        f"Dependency Graph | mode=layers | scope={_graph_scope_label(graph)}",
+        f"nodes={len(graph.nodes)} edges={total_edges} layers={len(layer_ids)}",
+        "",
+    ]
+
+    for index, layer_id in enumerate(layer_ids):
+        if layer_id == 0:
+            lines.append("L0 prerequisites")
+        else:
+            lines.append(f"L{layer_id} depends on L{layer_id - 1}")
+        for task_id in layers[layer_id]:
+            lines.append(f"- {_graph_node_label(graph, task_id)}")
+        if index < len(layer_ids) - 1:
+            lines.append("")
+
+    return "\n".join(lines)
+
+
+def render_dependency_graph_layers_rich(graph: DependencyGraph):
+    from rich.text import Text
+
+    return Text(render_dependency_graph_layers_plain(graph))
 
 
 def render_tag_counts_plain(
