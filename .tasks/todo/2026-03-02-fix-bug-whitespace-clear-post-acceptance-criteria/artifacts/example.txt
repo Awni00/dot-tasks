@@ -1,0 +1,58 @@
+> dot-tasks create
+Using tasks root: /Users/awni/Documents/project-code/dot-tasks/.tasks
+? task_name visualize-dependency-graph
+? priority p1
+? effort l
+? owner 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ 
+? Acceptance Criteria (Esc+Enter to submit) - TODO
+? spec_readiness rough
+? tags (select existing or add new) ['dependencies (2)', 'view (3)']
+? Set task dependencies? No
+Created: visualize-dependency-graph (t-20260302-001)
+links: dir | task.md
