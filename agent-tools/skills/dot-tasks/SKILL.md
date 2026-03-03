@@ -1,6 +1,6 @@
 ---
 name: dot-tasks
-description: Reference skill for users integrating dot-tasks into AI coding agents. Use dot-tasks to track tasks in `.tasks/` with clear, auditable state for humans and agents.
+description: Reference skill for users integrating dot-tasks into AI coding agents. Defines a structured workflow for working on and tracking tasks. Use dot-tasks to track tasks in `.tasks/` with clear, auditable state for humans and agents.
 ---
 
 # dot-tasks Skill
@@ -14,6 +14,20 @@ Use this skill whenever a repository uses `dot-tasks` for task lifecycle trackin
 - Use this skill when the user asks for task suggestions based on existing `dot-tasks` state.
 - Use this skill when the user asks to begin or resume work on an existing task.
 - Use this skill when the user asks for significant new work that should likely be tracked.
+
+## Plan Mode Deliverables
+
+By default, when asked to work on a task, produce both artifacts in order:
+1. Develop/refine the task specification and write it to `spec.md`.
+2. Develop the implementation plan and write it to `plan.md`.
+
+- `plan.md` must be based on a current, user-confirmed `spec.md`.
+- Exceptions:
+  - If explicitly asked for spec-only work, produce/update only `spec.md`.
+  - If resuming from a completed `spec.md`, validate it is still current, then produce/update `plan.md`.
+- Artifact scope:
+  - `spec.md`: A precise, testable statement of what must be built, including scope, requirements, interfaces, and acceptance criteria.
+  - `plan.md`: An ordered execution strategy for how to build it, including steps, dependencies, checkpoints, and risk mitigations.
 
 ## Workflow 1: Suggest What To Work On Next
 
@@ -35,16 +49,11 @@ Use this skill whenever a repository uses `dot-tasks` for task lifecycle trackin
    - If the user provides `task_name`/`task_id`, run `dot-tasks view <task_name_or_id> --json`.
    - If ambiguous, list likely matches and confirm the target with the user before binding.
 2. Branch by task status:
-   - `doing`: resume by reading `plan.md` and recent `activity.md`, then continue from the latest checkpoint.
+   - `doing`: resume by reading `spec.md`, `plan.md`, and recent `activity.md`, then continue from the latest checkpoint.
    - `todo`: run readiness checks before starting.
    - `done`: do not silently restart; ask whether to create a follow-up task or reopen scope explicitly.
-3. Apply readiness gate before execution:
-   - `spec_readiness` `unspecified`/`rough`: clarify high-level intent before starting.
-   - `spec_readiness` `ready`/`autonomous`: plan lower-level implementation details.
-4. If intent is unclear, ask open-ended questions in two stages:
-   - Stage 1: high-level intent, scope, desired outcome.
-   - Stage 2: implementation constraints, edge cases, acceptance criteria.
-5. Do not proceed on unstated assumptions when high-level intent is unclear.
+3. Ensure spec is ready before planning implementation
+4. If intent is unclear, ask directed open-ended questions in two stages to clarify intent and develop clear spec. Do not proceed on unstated assumptions when high-level intent is unclear.
 
 ## Workflow 3: Significant New Work
 
@@ -58,11 +67,13 @@ Use this skill whenever a repository uses `dot-tasks` for task lifecycle trackin
 ## Shared Task Lifecycle Loop
 
 For tracked task execution (regardless of how it was triggered), follow:
-`create -> start -> plan -> log-activity -> complete`
+`create -> spec -> confirm -> start -> plan -> log-activity -> complete`
 
-- Start active execution with `dot-tasks start`.
+- Follow Plan Mode Deliverables.
+- Start active execution with `dot-tasks start`: sets status to `doing` and creates empty `plan.md`.
+- If Plan Mode/intent work produced a finalized spec artifact, sync that Markdown to `spec.md` on the first execution turn after Plan Mode.
+- If Plan Mode produced a finalized `<proposed_plan>`, sync that  Markdown to `plan.md` on the first execution turn after Plan Mode, after spec confirmation.
 - Keep `plan.md` current as implementation decisions become concrete.
-- If Plan Mode produced a finalized `<proposed_plan>`, sync that exact Markdown verbatim to `plan.md` on the first execution turn after Plan Mode (overwrite template content; no summarization).
 - Log meaningful progress with `dot-tasks log-activity --note`.
 - Use `dot-tasks update` for mid-flight metadata/scope/priority changes.
 - Before `dot-tasks complete`, confirm acceptance criteria are satisfied.
@@ -96,9 +107,12 @@ dot-tasks delete <task_name_or_id>                         # soft-delete to tras
 - Prefer `dot-tasks` commands over direct edits to task state files.
 - Avoid silent auto-binding on fuzzy matches.
 - Confirm task binding with the user before tracked execution.
+- Apply ordering/default/exception behavior from Plan Mode Deliverables.
 - Direct file edits are allowed for:
   1. `task.md` for writing task summary/specs after `dot-tasks create`.
-  2. `plan.md` to keep implementation steps current after `dot-tasks start`.
+  2. `spec.md`: A precise, testable statement of what must be built, including scope, requirements, interfaces, and acceptance criteria.
+  3. `plan.md`: An ordered execution strategy for how to build it, including steps, dependencies, checkpoints, and risk mitigations.
+  4. Other task-local artifacts (for example `walkthrough.md`, `decisions.md`, `handoff.md`) only when useful for scope and naturally produced during the session; confirm with the user before non-trivial additions, and do not manufacture extra artifacts for small/self-contained tasks.
 - Do not rewrite `activity.md` history; append only.
 - Respect dependency checks.
 
