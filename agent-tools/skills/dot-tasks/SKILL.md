@@ -75,6 +75,8 @@ For tracked task execution (regardless of how it was triggered), follow:
 - If Plan Mode produced a finalized `<proposed_plan>`, sync that  Markdown to `plan.md` on the first execution turn after Plan Mode, after spec confirmation.
 - Keep `plan.md` current as implementation decisions become concrete.
 - Log meaningful progress with `dot-tasks log-activity --note`.
+- Log meaningful progress with `dot-tasks log-activity --note`.
+- For major tasks, document decisions made during implementation in a `decisions.md` artifact; include key decision rationale and alternative choices considered. Add "# NOTE: " comments in code for significant decisions. For major decisions, pause and ask user for direction before proceeding. Report back to user at end of execution with a summary of decisions made.
 - Use `dot-tasks update` for mid-flight metadata/scope/priority changes.
 - Before `dot-tasks complete`, confirm acceptance criteria are satisfied.
 
