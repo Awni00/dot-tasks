@@ -2023,6 +2023,47 @@ def test_create_interactive_form_receives_tag_options(
     ]
 
 
+def test_create_interactive_form_receives_name_validator(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # Purpose: ensure create_cmd passes a full task-name validator that enforces uniqueness before form completion.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "existing-task", "--tasks-root", str(root)])
+
+    captured: dict[str, object] = {}
+
+    def _create_form(default_name, dependency_options, tag_options, **kwargs):
+        validator = kwargs.get("validate_task_name")
+        assert callable(validator)
+        duplicate_error: Exception | None = None
+        try:
+            validator("existing-task")
+        except Exception as exc:
+            duplicate_error = exc
+        assert duplicate_error is not None
+        assert "Task name already exists: existing-task" in str(duplicate_error)
+        captured["validate_task_name"] = validator
+        return {
+            "task_name": "interactive-created",
+            "priority": "p2",
+            "effort": "m",
+            "owner": None,
+            "summary": "",
+            "spec_readiness": "unspecified",
+            "tags": [],
+            "depends_on": [],
+        }
+
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr("dot_tasks.cli.create_form", _create_form)
+
+    result = runner.invoke(app, ["create", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    assert callable(captured["validate_task_name"])
+
+
 def test_create_uses_custom_sections_from_config(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root), "--nointeractive"])

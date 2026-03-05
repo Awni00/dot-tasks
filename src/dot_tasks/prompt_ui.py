@@ -448,15 +448,28 @@ def create_form(
     dependency_options: list[tuple[str, str]] | None = None,
     tag_options: list[tuple[str, str]] | None = None,
     task_body_sections: list[dict[str, str]] | None = None,
+    validate_task_name: Callable[[str], None] | None = None,
     validate_depends_on: Callable[[list[str]], None] | None = None,
 ) -> dict[str, Any] | None:
     dep_options = dependency_options or []
     available_tags = tag_options or []
     sections = task_body_sections or []
 
-    task_name = _safe_prompt("task_name", default=default_name or "")
-    if task_name is None:
-        return None
+    while True:
+        raw_task_name = _safe_prompt("task_name", default=default_name or "")
+        if raw_task_name is None:
+            return None
+        task_name = raw_task_name.strip()
+        if not task_name:
+            typer.echo("Error: task_name is required", err=True)
+            continue
+        if validate_task_name is not None:
+            try:
+                validate_task_name(task_name)
+            except Exception as e:
+                typer.echo(f"Error: {e}", err=True)
+                continue
+        break
     priority = _prompt_single_choice(
         "priority",
         [(value, value) for value in VALID_PRIORITIES],
@@ -524,7 +537,7 @@ def create_form(
         else:
             depends_on = []
     return {
-        "task_name": task_name.strip(),
+        "task_name": task_name,
         "priority": priority,
         "effort": effort,
         "owner": owner.strip() or None,

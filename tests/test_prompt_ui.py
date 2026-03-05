@@ -9,6 +9,7 @@ import typer
 from dot_tasks.models import Task, TaskMetadata
 from dot_tasks import prompt_ui
 from dot_tasks import selector_ui
+from dot_tasks.service import TaskService
 
 
 class _FakePrompt:
@@ -389,28 +390,120 @@ def test_init_config_form_cancel_on_agents_file_prompt_returns_none(monkeypatch:
 
 
 def test_create_form_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: "")
-
-    selections = iter([None])
-    monkeypatch.setattr(
-        prompt_ui,
-        "select_one",
-        lambda title, options, default_value=None: next(selections),
-    )
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: None)
 
     assert prompt_ui.create_form(default_name="test-task") is None
 
 
+def test_create_form_reprompts_for_invalid_task_name(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Purpose: ensure invalid kebab-case names are rejected immediately and re-prompted.
+    choices = iter(["p2", "m", "unspecified"])
+    prompts = iter(["Invalid Name", "valid-name", ""])
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: next(prompts))
+    monkeypatch.setattr(prompt_ui, "_prompt_tags", lambda *args, **kwargs: [])
+
+    payload = prompt_ui.create_form(
+        default_name="test-task",
+        dependency_options=[],
+        validate_task_name=TaskService.validate_task_name,
+    )
+    assert payload is not None
+    assert payload["task_name"] == "valid-name"
+    assert (
+        "Error: task_name must be kebab-case with lowercase letters, numbers, and hyphens"
+        in capsys.readouterr().err
+    )
+
+
+def test_create_form_reprompts_for_duplicate_task_name(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Purpose: ensure duplicate-name validation errors are surfaced immediately at the name prompt.
+    choices = iter(["p2", "m", "unspecified"])
+    prompts = iter(["existing-task", "fresh-task", ""])
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: next(prompts))
+    monkeypatch.setattr(prompt_ui, "_prompt_tags", lambda *args, **kwargs: [])
+
+    def _validate_task_name(value: str) -> None:
+        if value == "existing-task":
+            raise ValueError("Task name already exists: existing-task")
+
+    payload = prompt_ui.create_form(
+        default_name="test-task",
+        dependency_options=[],
+        validate_task_name=_validate_task_name,
+    )
+    assert payload is not None
+    assert payload["task_name"] == "fresh-task"
+    assert "Error: Task name already exists: existing-task" in capsys.readouterr().err
+
+
+def test_create_form_reprompts_for_blank_task_name(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Purpose: ensure blank names are rejected before running other create-form prompts.
+    choices = iter(["p2", "m", "unspecified"])
+    prompts = iter(["   ", "valid-name", ""])
+    validator_calls: list[str] = []
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: next(prompts))
+    monkeypatch.setattr(prompt_ui, "_prompt_tags", lambda *args, **kwargs: [])
+
+    def _validate_task_name(value: str) -> None:
+        validator_calls.append(value)
+
+    payload = prompt_ui.create_form(
+        default_name="test-task",
+        dependency_options=[],
+        validate_task_name=_validate_task_name,
+    )
+    assert payload is not None
+    assert payload["task_name"] == "valid-name"
+    assert validator_calls == ["valid-name"]
+    assert "Error: task_name is required" in capsys.readouterr().err
+
+
+def test_create_form_cancel_during_task_name_reprompt_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Purpose: preserve cancel semantics when user aborts during the name validation loop.
+    prompts = iter(["Invalid Name", None])
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: next(prompts))
+    monkeypatch.setattr(
+        prompt_ui,
+        "_prompt_single_choice",
+        lambda *args, **kwargs: pytest.fail("create_form should exit before later prompts"),
+    )
+
+    assert (
+        prompt_ui.create_form(
+            default_name="test-task",
+            dependency_options=[],
+            validate_task_name=TaskService.validate_task_name,
+        )
+        is None
+    )
+
+
 def test_create_form_dependency_gate_skips_selector_on_no(monkeypatch: pytest.MonkeyPatch) -> None:
     choices = iter(["p2", "m", "unspecified"])
+    prompts = iter(["test-task", ""])
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: next(prompts))
+    monkeypatch.setattr(prompt_ui, "_prompt_tags", lambda *args, **kwargs: [])
     monkeypatch.setattr(prompt_ui, "_prompt_yes_no", lambda *args, **kwargs: False)
     monkeypatch.setattr(
         prompt_ui,
         "_prompt_depends_on_choice",
         lambda *args, **kwargs: pytest.fail("dependency selector should not be shown"),
     )
-    monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: "")
 
     payload = prompt_ui.create_form(
         default_name="test-task",
@@ -423,10 +516,12 @@ def test_create_form_dependency_gate_skips_selector_on_no(monkeypatch: pytest.Mo
 
 def test_create_form_dependency_gate_runs_selector_on_yes(monkeypatch: pytest.MonkeyPatch) -> None:
     choices = iter(["p2", "m", "ready"])
+    prompts = iter(["test-task", ""])
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: next(prompts))
+    monkeypatch.setattr(prompt_ui, "_prompt_tags", lambda *args, **kwargs: [])
     monkeypatch.setattr(prompt_ui, "_prompt_yes_no", lambda *args, **kwargs: True)
     monkeypatch.setattr(prompt_ui, "_prompt_depends_on_choice", lambda *args, **kwargs: ["t-1"])
-    monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: "")
 
     payload = prompt_ui.create_form(
         default_name="test-task",
@@ -439,13 +534,15 @@ def test_create_form_dependency_gate_runs_selector_on_yes(monkeypatch: pytest.Mo
 
 def test_create_form_dependency_gate_skipped_when_no_candidates(monkeypatch: pytest.MonkeyPatch) -> None:
     choices = iter(["p2", "m", "unspecified"])
+    prompts = iter(["test-task", ""])
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: next(prompts))
+    monkeypatch.setattr(prompt_ui, "_prompt_tags", lambda *args, **kwargs: [])
     monkeypatch.setattr(
         prompt_ui,
         "_prompt_yes_no",
         lambda *args, **kwargs: pytest.fail("dependency gate should not be shown"),
     )
-    monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: "")
 
     payload = prompt_ui.create_form(default_name="test-task", dependency_options=[])
     assert payload is not None
@@ -455,9 +552,11 @@ def test_create_form_dependency_gate_skipped_when_no_candidates(monkeypatch: pyt
 
 def test_create_form_cancel_at_dependency_gate_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
     choices = iter(["p2", "m", "unspecified"])
+    prompts = iter(["test-task", ""])
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: next(prompts))
+    monkeypatch.setattr(prompt_ui, "_prompt_tags", lambda *args, **kwargs: [])
     monkeypatch.setattr(prompt_ui, "_prompt_yes_no", lambda *args, **kwargs: None)
-    monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: "")
 
     assert (
         prompt_ui.create_form(
@@ -1003,9 +1102,10 @@ def test_update_form_no_dependency_options_skips_gate_and_selector(monkeypatch: 
 
 def test_create_form_uses_prompt_tags_payload(monkeypatch: pytest.MonkeyPatch) -> None:
     choices = iter(["p2", "m", "unspecified"])
+    prompts = iter(["test-task", ""])
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
     monkeypatch.setattr(prompt_ui, "_prompt_yes_no", lambda *args, **kwargs: False)
-    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: "")
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: next(prompts))
     monkeypatch.setattr(prompt_ui, "_prompt_tags", lambda *args, **kwargs: ["backend", "api"])
 
     payload = prompt_ui.create_form(default_name="test-task", dependency_options=[], tag_options=[])

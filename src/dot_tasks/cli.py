@@ -691,6 +691,7 @@ def create_cmd(
                 dependency_options=dependency_options,
                 tag_options=tag_options,
                 task_body_sections=task_body_sections,
+                validate_task_name=svc.validate_new_task_name,
                 validate_depends_on=lambda deps: svc.check_circular_dependencies(None, deps),
             )
             if form is None:

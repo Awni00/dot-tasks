@@ -99,6 +99,10 @@ class TaskService:
                 "task_name must be kebab-case with lowercase letters, numbers, and hyphens"
             )
 
+    def validate_new_task_name(self, task_name: str) -> None:
+        self.validate_task_name(task_name)
+        self._ensure_unique_task_name(task_name)
+
     def ensure_layout(self) -> None:
         storage.ensure_layout(self.tasks_root)
 
