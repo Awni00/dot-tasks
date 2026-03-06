@@ -1,10 +1,10 @@
 ---
 task_id: t-20260305-002
 task_name: dot-tasks-base-command-type-search-cmd
-status: todo
+status: completed
 date_created: '2026-03-05'
-date_started: null
-date_completed: null
+date_started: '2026-03-06'
+date_completed: '2026-03-06'
 priority: p2
 effort: m
 spec_readiness: ready

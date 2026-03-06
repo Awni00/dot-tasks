@@ -132,20 +132,57 @@ def _task(name: str, task_id: str = "t-20260201-001", status: str = "todo") -> T
     )
 
 
-def test_choose_command_uses_selector_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(prompt_ui, "select_one", lambda title, options, default_value=None: "init")
+def test_choose_command_uses_fuzzy_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Purpose: ensure command picker uses fuzzy selector path when available.
+    monkeypatch.setattr(prompt_ui, "select_fuzzy", lambda title, options, default_value=None: "init")
     monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: pytest.fail("numeric prompt used"))
 
     selected = prompt_ui.choose_command([("init", "Initialize")])
     assert selected == "init"
 
 
+def test_choose_command_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Purpose: preserve cancel semantics so fuzzy command cancellation returns None.
+    monkeypatch.setattr(prompt_ui, "select_fuzzy", lambda title, options, default_value=None: None)
+
+    selected = prompt_ui.choose_command([("init", "Initialize")])
+    assert selected is None
+
+
+def test_choose_command_passes_formatted_summary_options(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Purpose: keep command name+summary labels aligned to the longest command name for fuzzy search.
+    captured: dict[str, object] = {}
+
+    def _select_fuzzy(title, options, default_value=None):
+        captured["title"] = title
+        captured["options"] = options
+        captured["default_value"] = default_value
+        return "init"
+
+    monkeypatch.setattr(prompt_ui, "select_fuzzy", _select_fuzzy)
+
+    selected = prompt_ui.choose_command(
+        [
+            ("init", "Initialize tasks root"),
+            ("install-skill", "Install skill"),
+        ]
+    )
+    assert selected == "init"
+    assert captured["title"] == "Select command"
+    assert captured["options"] == [
+        ("init", "init           Initialize tasks root"),
+        ("install-skill", "install-skill  Install skill"),
+    ]
+    assert captured["default_value"] is None
+
+
 def test_choose_command_falls_back_to_numeric_on_selector_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Purpose: ensure selector failures still fall back to numeric command selection.
     monkeypatch.setattr(
         prompt_ui,
-        "select_one",
+        "select_fuzzy",
         lambda title, options, default_value=None: (_ for _ in ()).throw(
             selector_ui.SelectorUnavailableError("selector runtime failed")
         ),
@@ -154,6 +191,33 @@ def test_choose_command_falls_back_to_numeric_on_selector_unavailable(
 
     selected = prompt_ui.choose_command([("init", "Initialize"), ("list", "List tasks")])
     assert selected == "list"
+
+
+def test_choose_command_numeric_fallback_aligns_descriptions_to_longest_name(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # Purpose: ensure numeric fallback uses the same dynamic command-column alignment as fuzzy labels.
+    monkeypatch.setattr(
+        prompt_ui,
+        "select_fuzzy",
+        lambda title, options, default_value=None: (_ for _ in ()).throw(
+            selector_ui.SelectorUnavailableError("selector runtime failed")
+        ),
+    )
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: "0")
+
+    selected = prompt_ui.choose_command(
+        [
+            ("init", "Initialize"),
+            ("install-skill", "Install the dot-tasks skill"),
+        ]
+    )
+
+    assert selected is None
+    output = capsys.readouterr().out
+    assert " 1. init           Initialize" in output
+    assert " 2. install-skill  Install the dot-tasks skill" in output
 
 
 def test_choose_task_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:

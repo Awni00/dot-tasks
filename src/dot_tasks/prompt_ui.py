@@ -330,9 +330,13 @@ def choose_command(
     if not commands:
         return None
 
-    selector_options = [(name, f"{name:<8}  {summary}".rstrip()) for name, summary in commands]
+    command_name_width = max(8, max(len(name) for name, _ in commands))
+    selector_options = [
+        (name, f"{name:<{command_name_width}}  {summary}".rstrip())
+        for name, summary in commands
+    ]
     try:
-        selected = select_one(title, selector_options, default_value=commands[0][0])
+        selected = select_fuzzy(title, selector_options)
     except SelectorUnavailableError as exc:
         _warn_selector_fallback(exc)
     else:
@@ -344,7 +348,7 @@ def choose_command(
     typer.echo(title)
     typer.echo("-" * 72)
     for idx, (name, summary) in enumerate(commands, start=1):
-        typer.echo(f"{idx:>2}. {name:<8}  {summary}")
+        typer.echo(f"{idx:>2}. {name:<{command_name_width}}  {summary}")
     typer.echo(" 0. cancel")
 
     raw = _safe_prompt("Enter number", default="1")
