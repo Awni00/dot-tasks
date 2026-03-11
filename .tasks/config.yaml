@@ -4,7 +4,7 @@ settings:
   list_table:
     columns:
     - name: task_name
-      width: 32
+      width: 40
     - name: priority
       width: 8
     - name: effort
