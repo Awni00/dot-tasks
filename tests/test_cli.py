@@ -1597,7 +1597,29 @@ def test_missing_selector_triggers_prompt_picker(monkeypatch: pytest.MonkeyPatch
     assert "Started: pick-me" in result.output
 
 
+def test_command_palette_sections_group_core_workflow_commands() -> None:
+    # Purpose: ensure initialized repos get grouped home commands in the curated section order.
+    sections = cli._command_palette_sections(has_tasks_root=True)
+
+    assert [(section.title, [command.name for command in section.commands]) for section in sections] == [
+        ("Inspect", ["list", "view", "tags", "graph"]),
+        ("Lifecycle", ["create", "start", "update", "log-activity", "complete"]),
+        ("Maintenance", ["rename", "delete"]),
+        ("Setup", ["init", "add-agents-snippet", "install-skill"]),
+    ]
+
+
+def test_command_palette_sections_only_show_setup_before_init() -> None:
+    # Purpose: ensure first-run bare invocation only exposes setup actions before a tasks root exists.
+    sections = cli._command_palette_sections(has_tasks_root=False)
+
+    assert [(section.title, [command.name for command in section.commands]) for section in sections] == [
+        ("Setup", ["init", "add-agents-snippet", "install-skill"]),
+    ]
+
+
 def test_no_args_interactive_runs_selected_command(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # Purpose: ensure bare invocation still runs the selected setup command from the grouped root picker.
     monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
     monkeypatch.setattr(
         "dot_tasks.cli.init_config_form",
@@ -1613,14 +1635,23 @@ def test_no_args_interactive_runs_selected_command(monkeypatch: pytest.MonkeyPat
             ],
         },
     )
+    captured_sections: list[list[tuple[str, list[str]]]] = []
+
+    def _choose_command(sections, title):
+        captured_sections.append(
+            [(section.title, [command.name for command in section.commands]) for section in sections]
+        )
+        return "init"
+
     monkeypatch.setattr(
         "dot_tasks.cli.choose_command",
-        lambda commands, title: "init",
+        _choose_command,
     )
 
     with runner.isolated_filesystem(temp_dir=str(tmp_path)):
         result = runner.invoke(app, [])
         assert result.exit_code == 0
+        assert captured_sections == [[("Setup", ["init", "add-agents-snippet", "install-skill"])]]
         assert "Initialized tasks root:" in result.output
         assert (Path(".tasks") / "todo").is_dir()
         cfg = _read_config(Path(".tasks") / "config.yaml")
@@ -1643,8 +1674,9 @@ def test_init_interactive_cancel_exits_1(monkeypatch: pytest.MonkeyPatch, tmp_pa
 
 
 def test_no_args_interactive_cancel_exits_0(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Purpose: preserve cancel semantics for the grouped root picker.
     monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
-    monkeypatch.setattr("dot_tasks.cli.choose_command", lambda commands, title: None)
+    monkeypatch.setattr("dot_tasks.cli.choose_command", lambda sections, title: None)
 
     result = runner.invoke(app, [])
     assert result.exit_code == 0

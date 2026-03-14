@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from InquirerPy.separator import Separator
 import pytest
 import typer
 
@@ -99,10 +100,12 @@ class _FakeInquirer:
         self.fuzzy_error = fuzzy_error
         self.text_result = text_result
         self.text_error = text_error
+        self.last_select_kwargs = None
         self.last_fuzzy_kwargs = None
         self.last_text_kwargs = None
 
     def select(self, **kwargs):
+        self.last_select_kwargs = kwargs
         return _FakePrompt(result=self.select_result, error=self.select_error)
 
     def checkbox(self, **kwargs):
@@ -132,92 +135,141 @@ def _task(name: str, task_id: str = "t-20260201-001", status: str = "todo") -> T
     )
 
 
-def test_choose_command_uses_fuzzy_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Purpose: ensure command picker uses fuzzy selector path when available.
-    monkeypatch.setattr(prompt_ui, "select_fuzzy", lambda title, options, default_value=None: "init")
+def _command_sections() -> list[prompt_ui.CommandPaletteSection]:
+    return [
+        prompt_ui.CommandPaletteSection(
+            title="Inspect",
+            commands=[
+                prompt_ui.CommandPaletteEntry("list", "List tasks"),
+                prompt_ui.CommandPaletteEntry("view", "Show task"),
+            ],
+        ),
+        prompt_ui.CommandPaletteSection(
+            title="Setup",
+            commands=[
+                prompt_ui.CommandPaletteEntry("init", "Initialize tasks root"),
+            ],
+        ),
+    ]
+
+
+def test_choose_command_uses_grouped_select_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Purpose: ensure command picker uses grouped select path when available.
+    monkeypatch.setattr(
+        prompt_ui,
+        "select_one",
+        lambda title, options, default_value=None, style=None: "init",
+    )
     monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: pytest.fail("numeric prompt used"))
 
-    selected = prompt_ui.choose_command([("init", "Initialize")])
+    selected = prompt_ui.choose_command(_command_sections())
     assert selected == "init"
 
 
 def test_choose_command_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Purpose: preserve cancel semantics so fuzzy command cancellation returns None.
-    monkeypatch.setattr(prompt_ui, "select_fuzzy", lambda title, options, default_value=None: None)
+    # Purpose: preserve cancel semantics so grouped command picker cancellation returns None.
+    monkeypatch.setattr(
+        prompt_ui,
+        "select_one",
+        lambda title, options, default_value=None, style=None: None,
+    )
 
-    selected = prompt_ui.choose_command([("init", "Initialize")])
+    selected = prompt_ui.choose_command(_command_sections())
     assert selected is None
 
 
-def test_choose_command_passes_formatted_summary_options(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Purpose: keep command name+summary labels aligned to the longest command name for fuzzy search.
+def test_choose_command_passes_grouped_options_to_select(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Purpose: keep grouped command labels aligned and include visible section separators in selector UI.
     captured: dict[str, object] = {}
 
-    def _select_fuzzy(title, options, default_value=None):
+    def _select_one(title, options, default_value=None, style=None):
         captured["title"] = title
         captured["options"] = options
         captured["default_value"] = default_value
+        captured["style"] = style
         return "init"
 
-    monkeypatch.setattr(prompt_ui, "select_fuzzy", _select_fuzzy)
+    monkeypatch.setattr(prompt_ui, "select_one", _select_one)
 
-    selected = prompt_ui.choose_command(
-        [
-            ("init", "Initialize tasks root"),
-            ("install-skill", "Install skill"),
-        ]
-    )
+    selected = prompt_ui.choose_command(_command_sections())
     assert selected == "init"
     assert captured["title"] == "Select command"
     assert captured["options"] == [
-        ("init", "init           Initialize tasks root"),
-        ("install-skill", "install-skill  Install skill"),
+        prompt_ui.SelectionSeparator("---- Inspect ----"),
+        ("list", "list      List tasks"),
+        ("view", "view      Show task"),
+        prompt_ui.SelectionSeparator("---- Setup ----"),
+        ("init", "init      Initialize tasks root"),
     ]
     assert captured["default_value"] is None
+    assert captured["style"] == {"separator": "bold ansicyan"}
 
 
 def test_choose_command_falls_back_to_numeric_on_selector_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # Purpose: ensure selector failures still fall back to numeric command selection.
+    # Purpose: ensure grouped selector failures still fall back to numeric command selection.
     monkeypatch.setattr(
         prompt_ui,
-        "select_fuzzy",
-        lambda title, options, default_value=None: (_ for _ in ()).throw(
+        "select_one",
+        lambda title, options, default_value=None, style=None: (_ for _ in ()).throw(
             selector_ui.SelectorUnavailableError("selector runtime failed")
         ),
     )
     monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: "2")
 
-    selected = prompt_ui.choose_command([("init", "Initialize"), ("list", "List tasks")])
-    assert selected == "list"
+    selected = prompt_ui.choose_command(_command_sections())
+    assert selected == "view"
 
 
-def test_choose_command_numeric_fallback_aligns_descriptions_to_longest_name(
+def test_choose_command_numeric_fallback_renders_section_headings_and_global_indexes(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    # Purpose: ensure numeric fallback uses the same dynamic command-column alignment as fuzzy labels.
+    # Purpose: ensure numeric fallback mirrors grouped layout with section headings and global numbering.
     monkeypatch.setattr(
         prompt_ui,
-        "select_fuzzy",
-        lambda title, options, default_value=None: (_ for _ in ()).throw(
+        "select_one",
+        lambda title, options, default_value=None, style=None: (_ for _ in ()).throw(
             selector_ui.SelectorUnavailableError("selector runtime failed")
         ),
     )
     monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: "0")
 
-    selected = prompt_ui.choose_command(
-        [
-            ("init", "Initialize"),
-            ("install-skill", "Install the dot-tasks skill"),
-        ]
-    )
+    selected = prompt_ui.choose_command(_command_sections())
 
     assert selected is None
     output = capsys.readouterr().out
-    assert " 1. init           Initialize" in output
-    assert " 2. install-skill  Install the dot-tasks skill" in output
+    assert "---- Inspect ----" in output
+    assert "---- Setup ----" in output
+    assert " 1. list      List tasks" in output
+    assert " 2. view      Show task" in output
+    assert " 3. init      Initialize tasks root" in output
+
+
+def test_echo_command_section_heading_uses_secho_for_tty(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Purpose: ensure numeric fallback headings use styled output when a terminal is available.
+    class _FakeStdout:
+        def isatty(self) -> bool:
+            return True
+
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(prompt_ui.sys, "stdout", _FakeStdout())
+    monkeypatch.setattr(
+        prompt_ui.typer,
+        "secho",
+        lambda message, **kwargs: captured.update({"message": message, "kwargs": kwargs}),
+    )
+    monkeypatch.setattr(
+        prompt_ui.typer,
+        "echo",
+        lambda *_args, **_kwargs: pytest.fail("plain echo should not be used for tty section headings"),
+    )
+
+    prompt_ui._echo_command_section_heading("Inspect")
+
+    assert captured["message"] == "---- Inspect ----"
+    assert captured["kwargs"] == {"fg": typer.colors.CYAN, "bold": True}
 
 
 def test_choose_task_cancel_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -772,6 +824,35 @@ def test_select_one_runtime_error_raises_unavailable(monkeypatch: pytest.MonkeyP
 
     with pytest.raises(selector_ui.SelectorUnavailableError):
         selector_ui.select_one("pick", [("a", "A")])
+
+
+def test_select_one_passes_separator_entries_to_inquirer(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Purpose: ensure grouped select options preserve non-pickable section headers for the root picker UI.
+    monkeypatch.setattr(selector_ui, "_ensure_tty", lambda: None)
+    fake = _FakeInquirer(select_result="b")
+    monkeypatch.setattr(selector_ui, "_inquirer", lambda: fake)
+
+    value = selector_ui.select_one(
+        "pick",
+        [
+            selector_ui.SelectionSeparator("---- Inspect ----"),
+            ("a", "Alpha"),
+            selector_ui.SelectionSeparator("---- Setup ----"),
+            ("b", "Beta"),
+        ],
+        style={"separator": "bold ansicyan"},
+    )
+
+    assert value == "b"
+    assert fake.last_select_kwargs is not None
+    choices = fake.last_select_kwargs["choices"]
+    assert isinstance(choices[0], Separator)
+    assert str(choices[0]) == "---- Inspect ----"
+    assert choices[1] == {"name": "Alpha", "value": "a"}
+    assert isinstance(choices[2], Separator)
+    assert str(choices[2]) == "---- Setup ----"
+    assert choices[3] == {"name": "Beta", "value": "b"}
+    assert fake.last_select_kwargs["style"].dict["separator"] == "bold ansicyan"
 
 
 def test_select_text_uses_inquirer_prompt(monkeypatch: pytest.MonkeyPatch) -> None:

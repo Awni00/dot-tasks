@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from functools import lru_cache
+from dataclasses import dataclass
 from pathlib import Path
 import subprocess
 import sys
@@ -14,6 +15,8 @@ import typer
 from . import agents_snippet, render, storage
 from .models import Task, TaskError, TaskValidationError
 from .prompt_ui import (
+    CommandPaletteEntry,
+    CommandPaletteSection,
     _prompt_yes_no,
     _safe_prompt,
     choose_command,
@@ -49,6 +52,42 @@ YesOption = Annotated[
     bool,
     typer.Option("--yes", help="Skip confirmation prompt"),
 ]
+
+
+@dataclass(frozen=True)
+class _CommandPaletteMeta:
+    section: str
+    order: int
+    show_without_tasks_root: bool = False
+
+
+_COMMAND_SECTION_ORDER = {
+    "Inspect": 0,
+    "Lifecycle": 1,
+    "Maintenance": 2,
+    "Setup": 3,
+}
+
+_COMMAND_PALETTE_META = {
+    "list": _CommandPaletteMeta(section="Inspect", order=0),
+    "view": _CommandPaletteMeta(section="Inspect", order=1),
+    "tags": _CommandPaletteMeta(section="Inspect", order=2),
+    "graph": _CommandPaletteMeta(section="Inspect", order=3),
+    "create": _CommandPaletteMeta(section="Lifecycle", order=0),
+    "start": _CommandPaletteMeta(section="Lifecycle", order=1),
+    "update": _CommandPaletteMeta(section="Lifecycle", order=2),
+    "log-activity": _CommandPaletteMeta(section="Lifecycle", order=3),
+    "complete": _CommandPaletteMeta(section="Lifecycle", order=4),
+    "rename": _CommandPaletteMeta(section="Maintenance", order=0),
+    "delete": _CommandPaletteMeta(section="Maintenance", order=1),
+    "init": _CommandPaletteMeta(section="Setup", order=0, show_without_tasks_root=True),
+    "add-agents-snippet": _CommandPaletteMeta(
+        section="Setup",
+        order=1,
+        show_without_tasks_root=True,
+    ),
+    "install-skill": _CommandPaletteMeta(section="Setup", order=2, show_without_tasks_root=True),
+}
 
 
 def _can_interact() -> bool:
@@ -421,15 +460,40 @@ def _install_dot_tasks_skill_via_npx() -> tuple[bool, str]:
     )
 
 
-def _command_choices() -> list[tuple[str, str]]:
-    choices: list[tuple[str, str]] = []
+def _command_summary(command) -> str:
+    doc = (command.callback.__doc__ or "").strip()
+    return doc.splitlines()[0] if doc else ""
+
+
+def _command_palette_sections(*, has_tasks_root: bool) -> list[CommandPaletteSection]:
+    grouped: dict[str, list[tuple[int, CommandPaletteEntry]]] = {
+        section: [] for section in _COMMAND_SECTION_ORDER
+    }
     for command in app.registered_commands:
         if not command.name or command.callback is None:
             continue
-        doc = (command.callback.__doc__ or "").strip()
-        summary = doc.splitlines()[0] if doc else ""
-        choices.append((command.name, summary))
-    return choices
+        meta = _COMMAND_PALETTE_META.get(command.name)
+        if meta is None:
+            continue
+        if not has_tasks_root and not meta.show_without_tasks_root:
+            continue
+        grouped[meta.section].append(
+            (
+                meta.order,
+                CommandPaletteEntry(
+                    name=command.name,
+                    summary=_command_summary(command),
+                ),
+            )
+        )
+
+    sections: list[CommandPaletteSection] = []
+    for section_name, _ in sorted(_COMMAND_SECTION_ORDER.items(), key=lambda item: item[1]):
+        entries = [entry for _, entry in sorted(grouped[section_name], key=lambda item: item[0])]
+        if not entries:
+            continue
+        sections.append(CommandPaletteSection(title=section_name, commands=entries))
+    return sections
 
 
 def _find_command(name: str):
@@ -460,9 +524,14 @@ def _invoke_from_shell(
         ctx.invoke(command.callback, **fallback)
 
 
-def _run_command_picker(ctx: typer.Context, *, tasks_root: Path | None) -> None:
-    choices = _command_choices()
-    selected = choose_command(choices, title="Select a dot-tasks command")
+def _run_command_picker(
+    ctx: typer.Context,
+    *,
+    tasks_root: Path | None,
+    has_tasks_root: bool,
+) -> None:
+    sections = _command_palette_sections(has_tasks_root=has_tasks_root)
+    selected = choose_command(sections, title="Select a dot-tasks command")
     if not selected:
         _exit_canceled(0)
     _invoke_from_shell(ctx, selected, tasks_root=tasks_root)
@@ -491,7 +560,11 @@ def root_callback(
         raise typer.Exit(code=2)
 
     _print_banner(tasks_root=root_for_interactive)
-    _run_command_picker(ctx, tasks_root=tasks_root)
+    _run_command_picker(
+        ctx,
+        tasks_root=tasks_root,
+        has_tasks_root=root_for_interactive is not None,
+    )
 
 
 @app.command("init")

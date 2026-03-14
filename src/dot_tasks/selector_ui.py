@@ -6,6 +6,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import os
 import sys
+from typing import TypeAlias
 
 
 class SelectorUnavailableError(RuntimeError):
@@ -16,6 +17,15 @@ class SelectorUnavailableError(RuntimeError):
 class _SelectionOption:
     value: str
     label: str
+
+
+@dataclass(frozen=True)
+class SelectionSeparator:
+    label: str
+
+
+SelectOneOption: TypeAlias = tuple[str, str] | SelectionSeparator
+SelectStyle: TypeAlias = dict[str, str] | None
 
 
 def _run_prompt_handlers(handlers: object, event: object) -> None:
@@ -129,23 +139,49 @@ def _no_cpr_env():
 
 def select_one(
     title: str,
-    options: list[tuple[str, str]],
+    options: list[SelectOneOption],
     *,
     default_value: str | None = None,
+    style: SelectStyle = None,
 ) -> str | None:
     """Return selected value, None on cancel, or raise SelectorUnavailableError for fallback."""
     _ensure_tty()
     if not options:
         return None
 
-    choices = [_SelectionOption(value=value, label=label) for value, label in options]
     inquirer = _inquirer()
     try:
+        resolved_style = None
+        try:
+            from InquirerPy.separator import Separator
+        except Exception as exc:
+            raise SelectorUnavailableError("InquirerPy separator support unavailable") from exc
+        if style is not None:
+            try:
+                from InquirerPy.utils import get_style
+            except Exception as exc:
+                raise SelectorUnavailableError("InquirerPy style support unavailable") from exc
+            resolved_style = get_style(style, style_override=False)
+
+        choices = []
+        for option in options:
+            if isinstance(option, SelectionSeparator):
+                choices.append(Separator(option.label))
+                continue
+            value, label = option
+            choices.append(_SelectionOption(value=value, label=label))
+
         with _no_cpr_env():
             result = inquirer.select(
                 message=title,
-                choices=[{"name": item.label, "value": item.value} for item in choices],
+                choices=[
+                    item
+                    if not isinstance(item, _SelectionOption)
+                    else {"name": item.label, "value": item.value}
+                    for item in choices
+                ],
                 default=default_value,
+                style=resolved_style,
                 pointer=">",
                 # instruction="(up/down to move, enter to select, ctrl-c to cancel)",
                 vi_mode=False,

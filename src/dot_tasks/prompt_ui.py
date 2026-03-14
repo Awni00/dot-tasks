@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+import sys
 from typing import Any, Callable
 
 import typer
 
 from .models import Task, VALID_EFFORTS, VALID_PRIORITIES, VALID_SPEC_READINESS, VALID_STATUSES
 from .selector_ui import (
+    SelectionSeparator,
     SelectorUnavailableError,
     select_fuzzy,
     select_fuzzy_many,
@@ -19,6 +22,31 @@ from . import storage
 
 _ADD_NEW_TAGS_SENTINEL = "__add_new_tags__"
 _ADD_NEW_TAGS_LABEL = "+ add new tag(s)"
+_COMMAND_SECTION_STYLE = {"separator": "bold ansicyan"}
+
+
+@dataclass(frozen=True)
+class CommandPaletteEntry:
+    name: str
+    summary: str
+
+
+@dataclass(frozen=True)
+class CommandPaletteSection:
+    title: str
+    commands: list[CommandPaletteEntry]
+
+
+def _format_command_section_heading(title: str) -> str:
+    return f"---- {title} ----"
+
+
+def _echo_command_section_heading(title: str) -> None:
+    heading = _format_command_section_heading(title)
+    if sys.stdout.isatty():
+        typer.secho(heading, fg=typer.colors.CYAN, bold=True)
+        return
+    typer.echo(heading)
 
 
 def _warn_selector_fallback(exc: Exception) -> None:
@@ -324,19 +352,28 @@ def choose_task(tasks: list[Task], title: str = "Select task") -> str | None:
 
 
 def choose_command(
-    commands: list[tuple[str, str]],
+    sections: list[CommandPaletteSection],
     title: str = "Select command",
 ) -> str | None:
+    commands = [command for section in sections for command in section.commands]
     if not commands:
         return None
 
-    command_name_width = max(8, max(len(name) for name, _ in commands))
-    selector_options = [
-        (name, f"{name:<{command_name_width}}  {summary}".rstrip())
-        for name, summary in commands
-    ]
+    command_name_width = max(8, max(len(command.name) for command in commands))
+    selector_options: list[tuple[str, str] | SelectionSeparator] = []
+    for section in sections:
+        if not section.commands:
+            continue
+        selector_options.append(SelectionSeparator(_format_command_section_heading(section.title)))
+        selector_options.extend(
+            (
+                command.name,
+                f"{command.name:<{command_name_width}}  {command.summary}".rstrip(),
+            )
+            for command in section.commands
+        )
     try:
-        selected = select_fuzzy(title, selector_options)
+        selected = select_one(title, selector_options, style=_COMMAND_SECTION_STYLE)
     except SelectorUnavailableError as exc:
         _warn_selector_fallback(exc)
     else:
@@ -347,8 +384,15 @@ def choose_command(
     typer.echo("=" * 72)
     typer.echo(title)
     typer.echo("-" * 72)
-    for idx, (name, summary) in enumerate(commands, start=1):
-        typer.echo(f"{idx:>2}. {name:<{command_name_width}}  {summary}")
+    index = 1
+    for section in sections:
+        if not section.commands:
+            continue
+        typer.echo("")
+        _echo_command_section_heading(section.title)
+        for command in section.commands:
+            typer.echo(f"{index:>2}. {command.name:<{command_name_width}}  {command.summary}")
+            index += 1
     typer.echo(" 0. cancel")
 
     raw = _safe_prompt("Enter number", default="1")
@@ -361,7 +405,7 @@ def choose_command(
     if index == 0:
         return None
     if 1 <= index <= len(commands):
-        return commands[index - 1][0]
+        return commands[index - 1].name
     return None
 
 
