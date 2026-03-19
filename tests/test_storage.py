@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import yaml
 
 from dot_tasks import storage
@@ -46,6 +47,21 @@ def test_resolve_list_table_columns_reads_valid_custom_columns(tmp_path: Path) -
     columns = storage.resolve_list_table_columns(root, warn=warnings.append)
     assert columns == [{"name": "task_name", "width": 24}, {"name": "deps", "width": 14}]
     assert warnings == []
+
+
+def test_next_task_id_uses_date_prefix_and_suffix(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # Ensure next_task_id formats IDs as t-YYYYMMDD-XXXX using the configured alphabet.
+    def _choice(alphabet: str) -> str:
+        assert alphabet == storage.TASK_ID_ALPHABET
+        return "K"
+
+    monkeypatch.setattr("dot_tasks.storage.secrets.choice", _choice)
+    task_id = storage.next_task_id(tmp_path, "2026-03-19")
+    assert task_id == "t-20260319-KKKK"
+    assert len(task_id) == 15
 
 
 def test_resolve_list_table_columns_invalid_entries_warn_and_fallback(tmp_path: Path) -> None:

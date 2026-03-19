@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import MISSING, fields
 import datetime as dt
 from pathlib import Path
+import secrets
 import shutil
 from typing import Any, Callable, Literal
 
@@ -38,7 +39,7 @@ LIST_TABLE_COLUMNS_SUPPORTED = (
 )
 LIST_TABLE_COLUMN_DEFAULT_WIDTHS: dict[str, int] = {
     "task_name": 32,
-    "task_id": 14,
+    "task_id": 15,
     "status": 10,
     "priority": 8,
     "effort": 6,
@@ -46,6 +47,8 @@ LIST_TABLE_COLUMN_DEFAULT_WIDTHS: dict[str, int] = {
     "deps": 12,
     "created": 10,
 }
+TASK_ID_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
+TASK_ID_SUFFIX_LEN = 4
 DEFAULT_LIST_TABLE_COLUMNS: tuple[tuple[str, int], ...] = (
     ("task_name", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["task_name"]),
     ("priority", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["priority"]),
@@ -550,16 +553,8 @@ def load_tasks(tasks_root: Path, include_trash: bool = False) -> list[Task]:
 def next_task_id(tasks_root: Path, created_date: str) -> str:
     ymd = created_date.replace("-", "")
     prefix = f"t-{ymd}-"
-    max_seq = 0
-    for task in load_tasks(tasks_root, include_trash=True):
-        task_id = task.metadata.task_id
-        if task_id.startswith(prefix):
-            try:
-                seq = int(task_id.split("-")[-1])
-            except ValueError:
-                continue
-            max_seq = max(max_seq, seq)
-    return f"{prefix}{max_seq + 1:03d}"
+    suffix = "".join(secrets.choice(TASK_ID_ALPHABET) for _ in range(TASK_ID_SUFFIX_LEN))
+    return f"{prefix}{suffix}"
 
 
 def make_task_dir_name(created_date: str, task_name: str) -> str:
