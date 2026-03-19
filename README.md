@@ -119,7 +119,7 @@ uv pip install -e ".[dev]"
 | `create` | Add a new task to `todo/`. | `dot-tasks create <task_name> [--spec-readiness unspecified|rough|ready|autonomous]` |
 | `start` | Move a task to `doing/` and create `plan.md`. | `dot-tasks start <task_name>` |
 | `complete` | Move a task to `done/`. | `dot-tasks complete <task_name>` |
-| `list` | List tasks by status and optional tag filters (rich/plain/JSON depending on context). | `dot-tasks list [todo|doing|done] [--tag <tag> ...] [--json]` |
+| `list` | List tasks by status and optional tag filters (rich/plain/JSON depending on context). | `dot-tasks list [todo|doing|done|all] [--tag <tag> ...] [--json]` |
 | `tags` | Show task counts by tag with optional status filter (rich/plain/JSON depending on context). | `dot-tasks tags [todo|doing|done] [--sort count|name] [--json]` |
 | `view` | Show full details for one task, including clickable file links for `task.md`, `activity.md`, `plan.md`, and any extra files. | `dot-tasks view <task_name> [--json]` |
 | `graph` | Visualize task dependencies as a DAG in terminal output (`tree` or `layers` modes). | `dot-tasks graph [--mode tree|layers] [--include-done]` |
@@ -130,11 +130,14 @@ uv pip install -e ".[dev]"
 
 Interactive `create` and interactive `update` use a single tag selector flow with an optional `+ add new tag(s)` path.
 
+Status filter supports `todo|doing` style multi-select and `all`. Default is `todo|doing`.
+
 Tag examples:
 
 ```bash
 dot-tasks list --tag bug
-dot-tasks list doing --tag backend --tag api --all-tags
+dot-tasks list todo|doing --tag backend --tag api --all-tags
+dot-tasks list all
 dot-tasks tags
 dot-tasks tags todo --sort name
 ```
@@ -146,7 +149,7 @@ dot-tasks tags todo --sort name
 Typical agent workflow:
 
 1. Capture or refine a task spec with `dot-tasks create`.
-2. If asked what to work on, check `dot-tasks list` (`todo`/`doing`) and propose the top few options with a short rationale.
+2. If asked what to work on, check `dot-tasks list` (defaults to `todo|doing`) and propose the top few options with a short rationale.
 3. Move selected work into active state with `dot-tasks start`.
 4. Log meaningful progress with `dot-tasks log-activity --note ...` as work evolves.
 5. Close the loop with `dot-tasks complete` when acceptance criteria are met.

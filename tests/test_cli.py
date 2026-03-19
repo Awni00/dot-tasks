@@ -1099,6 +1099,7 @@ def test_list_grouped_sorted(tmp_path: Path) -> None:
 
 
 def test_list_json_sorted_by_status_and_date_created_desc(tmp_path: Path) -> None:
+    # Purpose: ensure cross-status ordering remains stable when using the all-status filter.
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
     runner.invoke(app, ["create", "todo-old", "--tasks-root", str(root)])
@@ -1115,7 +1116,7 @@ def test_list_json_sorted_by_status_and_date_created_desc(tmp_path: Path) -> Non
     runner.invoke(app, ["start", "done-task", "--tasks-root", str(root)])
     runner.invoke(app, ["complete", "done-task", "--tasks-root", str(root)])
 
-    result = runner.invoke(app, ["list", "--json", "--tasks-root", str(root)])
+    result = runner.invoke(app, ["list", "all", "--json", "--tasks-root", str(root)])
     assert result.exit_code == 0
     payload = json.loads(result.output)
     assert [item["task_name"] for item in payload] == [
@@ -1124,6 +1125,57 @@ def test_list_json_sorted_by_status_and_date_created_desc(tmp_path: Path) -> Non
         "doing-task",
         "done-task",
     ]
+
+
+def test_list_default_filters_todo_and_doing_json(tmp_path: Path) -> None:
+    # Purpose: ensure list defaults to todo|doing and omits completed tasks.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "todo-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "doing-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "done-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["start", "doing-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["start", "done-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["complete", "done-task", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["list", "--json", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert {item["task_name"] for item in payload} == {"todo-task", "doing-task"}
+
+
+def test_list_multi_status_filter_json(tmp_path: Path) -> None:
+    # Purpose: ensure multi-status filters include each requested status.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "todo-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "doing-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "done-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["start", "doing-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["start", "done-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["complete", "done-task", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["list", "todo|doing", "--json", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert {item["task_name"] for item in payload} == {"todo-task", "doing-task"}
+
+
+def test_list_all_status_filter_json(tmp_path: Path) -> None:
+    # Purpose: ensure the all filter includes todo, doing, and done tasks.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "todo-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "doing-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "done-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["start", "doing-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["start", "done-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["complete", "done-task", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["list", "all", "--json", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert {item["task_name"] for item in payload} == {"todo-task", "doing-task", "done-task"}
 
 
 def test_list_filters_by_tag_json(tmp_path: Path) -> None:

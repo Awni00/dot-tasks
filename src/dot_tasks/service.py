@@ -26,6 +26,29 @@ from . import storage
 STATUS_SORT = {"todo": 0, "doing": 1, "completed": 2}
 
 
+def _parse_status_filter(status: str | None) -> set[str] | None:
+    if status is None:
+        return None
+    value = status.strip()
+    if not value:
+        raise TaskValidationError("Invalid status filter: empty value")
+    if value == "all":
+        return None
+    tokens = [token.strip() for token in value.split("|")]
+    if any(not token for token in tokens):
+        raise TaskValidationError(f"Invalid status filter: {status}")
+    normalized: set[str] = set()
+    for token in tokens:
+        if token == "done":
+            token = "completed"
+        if token == "all":
+            raise TaskValidationError("Invalid status filter: 'all' must be used alone")
+        if token not in VALID_STATUSES:
+            raise TaskValidationError(f"Invalid status filter: {status}")
+        normalized.add(token)
+    return normalized
+
+
 def _task_order_key(task: Task) -> tuple[int, int, str]:
     return (
         STATUS_SORT.get(task.metadata.status, 99),
@@ -293,9 +316,9 @@ class TaskService:
         untagged_only: bool = False,
     ) -> list[Task]:
         tasks = self._load(include_trash=include_trash)
-        if status:
-            desired = "completed" if status == "done" else status
-            tasks = [task for task in tasks if task.metadata.status == desired]
+        status_filter = _parse_status_filter(status)
+        if status_filter is not None:
+            tasks = [task for task in tasks if task.metadata.status in status_filter]
 
         include_tag_set = set(_normalize_tags(include_tags))
         exclude_tag_set = set(_normalize_tags(exclude_tags))

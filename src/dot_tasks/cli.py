@@ -858,8 +858,11 @@ def complete_cmd(
 def list_cmd(
     status: Annotated[
         str | None,
-        typer.Argument(help="Optional status filter: todo, doing, done", show_default=False),
-    ] = None,
+        typer.Argument(
+            help="Optional status filter: todo|doing|done or all (default: todo|doing)",
+            show_default=False,
+        ),
+    ] = "todo|doing",
     as_json: Annotated[bool, typer.Option("--json")] = False,
     tag: Annotated[list[str], typer.Option("--tag", help="Can be repeated")] = [],
     exclude_tag: Annotated[list[str], typer.Option("--exclude-tag", help="Can be repeated")] = [],
