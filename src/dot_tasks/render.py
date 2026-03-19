@@ -65,6 +65,7 @@ def _task_list_row(task: Task, unmet_count: int) -> dict[str, str]:
         "spec_readiness": task.metadata.spec_readiness,
         "deps": _health_label(unmet_count),
         "created": task.metadata.date_created,
+        "completed": task.metadata.date_completed or "-",
     }
 
 
@@ -109,7 +110,7 @@ def render_task_list_plain(
 def _column_style(name: str) -> str:
     if name == "task_name":
         return "bold"
-    if name in {"task_id", "created"}:
+    if name in {"task_id", "created", "completed"}:
         return "dim"
     return ""
 
@@ -136,6 +137,11 @@ def render_task_list_rich(
             by_status.setdefault(task.metadata.status, []).append(task)
 
     renderables = []
+    apply_done_defaults = None
+    if columns:
+        from . import storage
+
+        apply_done_defaults = storage.apply_done_list_defaults
     for status in STATUS_ORDER:
         bucket = by_status.get(status) or []
         if not bucket:
@@ -147,13 +153,17 @@ def render_task_list_rich(
         )
         renderables.append(section_title)
 
+        bucket_columns = columns
+        if status == "completed" and apply_done_defaults is not None:
+            bucket_columns = apply_done_defaults(columns)
+
         table = Table(
             box=box.SIMPLE_HEAVY,
             show_header=True,
             header_style="bold white",
             pad_edge=False,
         )
-        for column in columns:
+        for column in bucket_columns:
             name = _column_name(column)
             width = _column_width(column)
             table.add_column(
@@ -169,7 +179,7 @@ def render_task_list_rich(
             unmet_count = unmet_counts.get(task.metadata.task_id, 0)
             row = _task_list_row(task, unmet_count)
             rendered: list[str | Text] = []
-            for column in columns:
+            for column in bucket_columns:
                 name = _column_name(column)
                 value = row[name]
                 if name == "status":

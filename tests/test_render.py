@@ -6,7 +6,7 @@ import re
 
 import pytest
 
-from dot_tasks import render
+from dot_tasks import render, storage
 from dot_tasks.models import DependencyGraph, DependencyGraphNode, Task, TaskMetadata
 
 OSC8_LINK_RE = re.compile(r"\x1b\]8;;[^\x1b]*\x1b\\(.*?)\x1b\]8;;\x1b\\")
@@ -16,13 +16,21 @@ def _strip_osc8(text: str) -> str:
     return OSC8_LINK_RE.sub(r"\1", text)
 
 
-def _task(name: str, status: str, priority: str, task_id: str, created: str) -> Task:
+def _task(
+    name: str,
+    status: str,
+    priority: str,
+    task_id: str,
+    created: str,
+    completed: str | None = None,
+) -> Task:
     return Task(
         metadata=TaskMetadata(
             task_id=task_id,
             task_name=name,
             status=status,
             date_created=created,
+            date_completed=completed,
             priority=priority,
             effort="m",
         ),
@@ -99,6 +107,26 @@ def test_render_task_list_plain_supports_spec_readiness_column() -> None:
     assert "unspecified" in output
 
 
+def test_render_task_list_plain_supports_completed_column() -> None:
+    # Purpose: ensure list rendering can show completed dates when requested.
+    tasks = [
+        _task(
+            "done-task",
+            "completed",
+            "p2",
+            "t-20260222-003",
+            "2026-02-22",
+            completed="2026-02-23",
+        )
+    ]
+    unmet = {"t-20260222-003": 0}
+    columns = _columns(("task_name", 16), ("completed", 10))
+
+    output = render.render_task_list_plain(tasks, unmet, columns)
+    assert "completed" in output.splitlines()[0]
+    assert "2026-02-23" in output
+
+
 def test_render_task_list_rich_sections_and_labels() -> None:
     pytest.importorskip("rich")
     from rich.console import Console
@@ -134,6 +162,32 @@ def test_render_task_list_rich_sections_and_labels() -> None:
     assert "p0" in text
     assert "p1" in text
     assert "p3" in text
+
+
+def test_render_task_list_rich_done_defaults_swap_deps_for_completed() -> None:
+    # Purpose: ensure done-only lists swap deps for completed date by default.
+    pytest.importorskip("rich")
+    from rich.console import Console
+
+    tasks = [
+        _task(
+            "done-task",
+            "completed",
+            "p3",
+            "t-20260222-003",
+            "2026-02-22",
+            completed="2026-02-23",
+        )
+    ]
+    unmet = {"t-20260222-003": 0}
+    columns = storage.default_list_table_columns()
+
+    renderable = render.render_task_list_rich(tasks, unmet, columns)
+    console = Console(width=120, record=True)
+    console.print(renderable)
+    text = console.export_text()
+    assert "completed" in text
+    assert "deps" not in text
 
 
 def test_render_dependency_graph_tree_marks_shared_nodes() -> None:

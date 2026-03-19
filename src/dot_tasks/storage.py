@@ -36,6 +36,7 @@ LIST_TABLE_COLUMNS_SUPPORTED = (
     "spec_readiness",
     "deps",
     "created",
+    "completed",
 )
 LIST_TABLE_COLUMN_DEFAULT_WIDTHS: dict[str, int] = {
     "task_name": 32,
@@ -46,6 +47,7 @@ LIST_TABLE_COLUMN_DEFAULT_WIDTHS: dict[str, int] = {
     "spec_readiness": 14,
     "deps": 12,
     "created": 10,
+    "completed": 12,
 }
 TASK_ID_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
 TASK_ID_SUFFIX_LEN = 4
@@ -53,8 +55,15 @@ DEFAULT_LIST_TABLE_COLUMNS: tuple[tuple[str, int], ...] = (
     ("task_name", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["task_name"]),
     ("priority", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["priority"]),
     ("effort", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["effort"]),
-    ("deps", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["deps"]),
     ("created", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["created"]),
+    ("deps", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["deps"]),
+)
+DEFAULT_DONE_LIST_TABLE_COLUMNS: tuple[tuple[str, int], ...] = (
+    ("task_name", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["task_name"]),
+    ("priority", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["priority"]),
+    ("effort", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["effort"]),
+    ("created", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["created"]),
+    ("completed", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["completed"]),
 )
 
 
@@ -105,6 +114,48 @@ def _default_list_table_columns(
     if columns is not None:
         return [{"name": str(column["name"]), "width": int(column["width"])} for column in columns]
     return [{"name": name, "width": width} for name, width in DEFAULT_LIST_TABLE_COLUMNS]
+
+
+def default_list_table_columns(
+    columns: list[dict[str, int | str]] | None = None,
+) -> list[dict[str, int | str]]:
+    return _default_list_table_columns(columns)
+
+
+def default_done_list_table_columns() -> list[dict[str, int | str]]:
+    return [{"name": name, "width": width} for name, width in DEFAULT_DONE_LIST_TABLE_COLUMNS]
+
+
+def list_column_names(columns: list[dict[str, int | str]]) -> list[str]:
+    return [str(column["name"]) for column in columns]
+
+
+def default_list_column_names() -> list[str]:
+    return [name for name, _ in DEFAULT_LIST_TABLE_COLUMNS]
+
+
+def apply_done_list_defaults(
+    columns: list[dict[str, int | str]],
+) -> list[dict[str, int | str]]:
+    names = list_column_names(columns)
+    if "completed" in names:
+        return columns
+    if names != default_list_column_names():
+        return columns
+
+    updated: list[dict[str, int | str]] = []
+    for column in columns:
+        name = str(column["name"])
+        if name == "deps":
+            updated.append(
+                {
+                    "name": "completed",
+                    "width": int(column.get("width", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["completed"])),
+                }
+            )
+        else:
+            updated.append(column)
+    return updated
 
 
 def default_config(

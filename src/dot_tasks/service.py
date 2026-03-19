@@ -49,10 +49,18 @@ def _parse_status_filter(status: str | None) -> set[str] | None:
     return normalized
 
 
+def _task_sort_date(task: Task) -> int:
+    if task.metadata.status == "completed":
+        date_value = task.metadata.date_completed or task.metadata.date_created
+    else:
+        date_value = task.metadata.date_created
+    return int(date_value.replace("-", ""))
+
+
 def _task_order_key(task: Task) -> tuple[int, int, str]:
     return (
         STATUS_SORT.get(task.metadata.status, 99),
-        -int(task.metadata.date_created.replace("-", "")),
+        -_task_sort_date(task),
         task.metadata.task_name,
     )
 
@@ -339,14 +347,7 @@ class TaskService:
                 filtered.append(task)
             tasks = filtered
 
-        return sorted(
-            tasks,
-            key=lambda task: (
-                STATUS_SORT.get(task.metadata.status, 99),
-                -int(task.metadata.date_created.replace("-", "")),
-                task.metadata.task_name,
-            ),
-        )
+        return sorted(tasks, key=_task_order_key)
 
     def tag_counts(
         self,

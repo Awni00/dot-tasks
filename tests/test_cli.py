@@ -77,6 +77,16 @@ def _set_date_created(tasks_root: Path, bucket: str, task_name: str, date_create
     )
 
 
+def _set_date_completed(tasks_root: Path, bucket: str, task_name: str, date_completed: str) -> None:
+    task_md = _task_md_path(tasks_root, bucket, task_name)
+    meta, body = _read_task_md(task_md)
+    meta["date_completed"] = date_completed
+    task_md.write_text(
+        f"---\n{yaml.safe_dump(meta, sort_keys=False)}---\n{body}",
+        encoding="utf-8",
+    )
+
+
 def _read_config(path: Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
@@ -1125,6 +1135,85 @@ def test_list_json_sorted_by_status_and_date_created_desc(tmp_path: Path) -> Non
         "doing-task",
         "done-task",
     ]
+
+
+def test_list_done_sorted_by_date_completed_desc(tmp_path: Path) -> None:
+    # Purpose: ensure done list ordering uses date_completed (newest first).
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "done-old", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "done-new", "--tasks-root", str(root)])
+    runner.invoke(app, ["complete", "done-old", "--tasks-root", str(root)])
+    runner.invoke(app, ["complete", "done-new", "--tasks-root", str(root)])
+
+    _set_date_completed(root, "done", "done-old", "2026-02-01")
+    _set_date_completed(root, "done", "done-new", "2026-02-03")
+
+    result = runner.invoke(app, ["list", "done", "--json", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert [item["task_name"] for item in payload] == ["done-new", "done-old"]
+
+
+def test_list_all_sorts_done_by_date_completed_desc(tmp_path: Path) -> None:
+    # Purpose: ensure done tasks are ordered by date_completed within the all-status list.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "todo-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "doing-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "done-old", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "done-new", "--tasks-root", str(root)])
+
+    runner.invoke(app, ["start", "doing-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["complete", "done-old", "--tasks-root", str(root)])
+    runner.invoke(app, ["complete", "done-new", "--tasks-root", str(root)])
+
+    _set_date_completed(root, "done", "done-old", "2026-02-01")
+    _set_date_completed(root, "done", "done-new", "2026-02-03")
+
+    result = runner.invoke(app, ["list", "all", "--json", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert [item["task_name"] for item in payload][-2:] == ["done-new", "done-old"]
+
+
+def test_list_done_swaps_deps_for_completed_for_default_column_names(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    # Purpose: ensure done-only output uses completed column when columns match defaults.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "done-task", "--tasks-root", str(root)])
+    runner.invoke(app, ["complete", "done-task", "--tasks-root", str(root)])
+    (root / "config.yaml").write_text(
+        (
+            "settings:\n"
+            "  interactive_enabled: true\n"
+            "  list_table:\n"
+            "    columns:\n"
+            "      - name: task_name\n"
+            "        width: 40\n"
+            "      - name: priority\n"
+            "        width: 8\n"
+            "      - name: effort\n"
+            "        width: 6\n"
+            "      - name: deps\n"
+            "        width: 12\n"
+            "      - name: created\n"
+            "        width: 10\n"
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("dot_tasks.cli._can_render_rich_list_output", lambda: False)
+    result = runner.invoke(app, ["list", "done", "--tasks-root", str(root)])
+    assert result.exit_code == 0
+    header = next(
+        line for line in result.output.splitlines() if line.strip().startswith("task_name")
+    )
+    assert "completed" in header
+    assert "deps" not in header
 
 
 def test_list_default_filters_todo_and_doing_json(tmp_path: Path) -> None:

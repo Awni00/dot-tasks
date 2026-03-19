@@ -883,6 +883,8 @@ def list_cmd(
             untagged_only=untagged,
         )
         list_columns = storage.resolve_list_table_columns(svc.tasks_root, warn=_warn_config)
+        if tasks and all(task.metadata.status == "completed" for task in tasks):
+            list_columns = storage.apply_done_list_defaults(list_columns)
 
         unmet_counts = {task.metadata.task_id: svc.dependency_health(task)[0] for task in tasks}
         if as_json:

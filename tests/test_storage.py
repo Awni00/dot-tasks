@@ -49,6 +49,18 @@ def test_resolve_list_table_columns_reads_valid_custom_columns(tmp_path: Path) -
     assert warnings == []
 
 
+def test_default_done_list_table_columns() -> None:
+    # Purpose: ensure done defaults include completed date and omit deps.
+    columns = storage.default_done_list_table_columns()
+    assert columns == [
+        {"name": "task_name", "width": 32},
+        {"name": "priority", "width": 8},
+        {"name": "effort", "width": 6},
+        {"name": "completed", "width": 12},
+        {"name": "created", "width": 10},
+    ]
+
+
 def test_next_task_id_uses_date_prefix_and_suffix(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
