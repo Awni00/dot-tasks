@@ -5,7 +5,7 @@ status: todo
 date_created: '2026-02-24'
 date_started: null
 date_completed: null
-priority: p1
+priority: p2
 effort: m
 spec_readiness: unspecified
 depends_on: []

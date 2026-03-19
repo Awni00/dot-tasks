@@ -1,10 +1,10 @@
 ---
 task_id: t-20260316-001
 task_name: make-taskid-pseudorandom-to-enable-parallel-additions
-status: doing
+status: completed
 date_created: '2026-03-16'
 date_started: '2026-03-19'
-date_completed: null
+date_completed: '2026-03-19'
 priority: p0
 effort: m
 spec_readiness: ready
