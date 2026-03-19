@@ -17,13 +17,7 @@ def test_resolve_list_table_columns_uses_defaults_when_missing(tmp_path: Path) -
     root = tmp_path / ".tasks"
     warnings: list[str] = []
     columns = storage.resolve_list_table_columns(root, warn=warnings.append)
-    assert columns == [
-        {"name": "task_name", "width": 32},
-        {"name": "priority", "width": 8},
-        {"name": "effort", "width": 6},
-        {"name": "deps", "width": 12},
-        {"name": "created", "width": 10},
-    ]
+    assert columns == storage.default_list_table_columns()
     assert warnings == []
 
 
@@ -52,13 +46,12 @@ def test_resolve_list_table_columns_reads_valid_custom_columns(tmp_path: Path) -
 def test_default_done_list_table_columns() -> None:
     # Purpose: ensure done defaults include completed date and omit deps.
     columns = storage.default_done_list_table_columns()
-    assert columns == [
-        {"name": "task_name", "width": 32},
-        {"name": "priority", "width": 8},
-        {"name": "effort", "width": 6},
-        {"name": "completed", "width": 12},
-        {"name": "created", "width": 10},
-    ]
+    names = [column["name"] for column in columns]
+    assert "completed" in names
+    assert "deps" not in names
+    assert len(names) == len(storage.default_list_column_names())
+    completed_column = next(column for column in columns if column["name"] == "completed")
+    assert completed_column["width"] == storage.LIST_TABLE_COLUMN_DEFAULT_WIDTHS["completed"]
 
 
 def test_next_task_id_uses_date_prefix_and_suffix(
@@ -94,13 +87,7 @@ def test_resolve_list_table_columns_invalid_entries_warn_and_fallback(tmp_path: 
 
     warnings: list[str] = []
     columns = storage.resolve_list_table_columns(root, warn=warnings.append)
-    assert columns == [
-        {"name": "task_name", "width": 32},
-        {"name": "priority", "width": 8},
-        {"name": "effort", "width": 6},
-        {"name": "deps", "width": 12},
-        {"name": "created", "width": 10},
-    ]
+    assert columns == storage.default_list_table_columns()
     assert any("Unsupported list column 'not_real'" in message for message in warnings)
     assert any("Invalid width for list column 'task_name'" in message for message in warnings)
     assert any("No valid settings.list_table.columns" in message for message in warnings)

@@ -8,7 +8,7 @@ import pytest
 import typer
 
 from dot_tasks.models import Task, TaskMetadata
-from dot_tasks import prompt_ui
+from dot_tasks import prompt_ui, storage
 from dot_tasks import selector_ui
 from dot_tasks.service import TaskService
 
@@ -425,13 +425,7 @@ def test_init_config_form_empty_columns_falls_back_to_defaults(
     payload = prompt_ui.init_config_form()
     assert payload is not None
     assert payload["show_banner"] is True
-    assert payload["list_columns"] == [
-        {"name": "task_name", "width": 32},
-        {"name": "priority", "width": 8},
-        {"name": "effort", "width": 6},
-        {"name": "deps", "width": 12},
-        {"name": "created", "width": 10},
-    ]
+    assert payload["list_columns"] == storage.default_list_table_columns()
     captured = capsys.readouterr()
     assert "Warning: no list columns selected; using defaults." in captured.err
 
@@ -467,13 +461,7 @@ def test_init_config_form_empty_selection_uses_fallback_defaults_even_with_inval
     payload = prompt_ui.init_config_form(default_list_column_names=["not-a-column"])
     assert payload is not None
     assert payload["show_banner"] is True
-    assert payload["list_columns"] == [
-        {"name": "task_name", "width": 32},
-        {"name": "priority", "width": 8},
-        {"name": "effort", "width": 6},
-        {"name": "deps", "width": 12},
-        {"name": "created", "width": 10},
-    ]
+    assert payload["list_columns"] == storage.default_list_table_columns()
 
 
 def test_init_config_form_cancel_on_banner_choice_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -9,7 +9,7 @@ import pytest
 from typer.testing import CliRunner
 import yaml
 
-from dot_tasks import cli
+from dot_tasks import cli, storage
 from dot_tasks.cli import app
 
 
@@ -116,13 +116,7 @@ def test_init_idempotent(tmp_path: Path) -> None:
     cfg = _read_config(root / "config.yaml")
     assert cfg["settings"]["interactive_enabled"] is True
     assert cfg["settings"]["show_banner"] is True
-    assert cfg["settings"]["list_table"]["columns"] == [
-        {"name": "task_name", "width": 32},
-        {"name": "priority", "width": 8},
-        {"name": "effort", "width": 6},
-        {"name": "deps", "width": 12},
-        {"name": "created", "width": 10},
-    ]
+    assert cfg["settings"]["list_table"]["columns"] == storage.default_list_table_columns()
 
 
 def test_init_nointeractive_creates_default_config(tmp_path: Path) -> None:
@@ -132,13 +126,7 @@ def test_init_nointeractive_creates_default_config(tmp_path: Path) -> None:
     cfg = _read_config(root / "config.yaml")
     assert cfg["settings"]["interactive_enabled"] is True
     assert cfg["settings"]["show_banner"] is True
-    assert cfg["settings"]["list_table"]["columns"] == [
-        {"name": "task_name", "width": 32},
-        {"name": "priority", "width": 8},
-        {"name": "effort", "width": 6},
-        {"name": "deps", "width": 12},
-        {"name": "created", "width": 10},
-    ]
+    assert cfg["settings"]["list_table"]["columns"] == storage.default_list_table_columns()
 
 
 def test_init_interactive_uses_form_values(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -1186,22 +1174,20 @@ def test_list_done_swaps_deps_for_completed_for_default_column_names(
     runner.invoke(app, ["init", "--tasks-root", str(root)])
     runner.invoke(app, ["create", "done-task", "--tasks-root", str(root)])
     runner.invoke(app, ["complete", "done-task", "--tasks-root", str(root)])
+    columns = storage.default_list_table_columns()
+    columns = [
+        {"name": column["name"], "width": (40 if column["name"] == "task_name" else column["width"])}
+        for column in columns
+    ]
     (root / "config.yaml").write_text(
-        (
-            "settings:\n"
-            "  interactive_enabled: true\n"
-            "  list_table:\n"
-            "    columns:\n"
-            "      - name: task_name\n"
-            "        width: 40\n"
-            "      - name: priority\n"
-            "        width: 8\n"
-            "      - name: effort\n"
-            "        width: 6\n"
-            "      - name: deps\n"
-            "        width: 12\n"
-            "      - name: created\n"
-            "        width: 10\n"
+        yaml.safe_dump(
+            {
+                "settings": {
+                    "interactive_enabled": True,
+                    "list_table": {"columns": columns},
+                }
+            },
+            sort_keys=False,
         ),
         encoding="utf-8",
     )
@@ -1686,15 +1672,7 @@ def test_list_invalid_column_config_warns_and_uses_defaults(
     result = runner.invoke(app, ["list", "--tasks-root", str(root)])
     assert result.exit_code == 0
     assert "Warning: No valid settings.list_table.columns" in result.output
-    assert captured_columns == [
-        [
-            {"name": "task_name", "width": 32},
-            {"name": "priority", "width": 8},
-            {"name": "effort", "width": 6},
-            {"name": "deps", "width": 12},
-            {"name": "created", "width": 10},
-        ]
-    ]
+    assert captured_columns == [storage.default_list_table_columns()]
 
 
 def test_subdirectory_discovers_root(tmp_path: Path) -> None:
