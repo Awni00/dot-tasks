@@ -1,0 +1,7 @@
+2026-07-10 15:17 | human | create | Task created (t-20260710-VJ87)
+2026-07-10 15:17 | human | plan | Task started
+2026-07-10 15:22 | agent | update | Diagnosed current bug as prompt-toolkit final multiline rendering: when InquirerPy compact answered text reaches terminal width, the done-state window expands to terminal height and renderer emits that many CRLFs. Confirmed CPR is unrelated. Compared unconditional no-wrap (fixes artifact but harms editing) with done-state-only no-wrap; selected wrap_lines=~is_done for multiline prompts to preserve editing behavior. Added a POSIX PTY regression that fails on original with 13 newlines in a 12x40 terminal and passes after the fix.
+2026-07-10 15:25 | human | update | Task metadata updated
+2026-07-10 15:25 | agent | update | Validation complete: PTY regression passes for exact-width (40 columns), prompt-wider-than-terminal (20 columns), long answers, multiline compaction, wide Unicode, and a normal 80-column control. Full 40x12 create flow submits both Summary and Acceptance Criteria with 2 line breaks each and persists exact content; narrow cancellation emits 3 line breaks and exits cleanly. python -m compileall, git diff --check, and full pytest suite pass (257 tests; focused PTY matrix 6 cases).
+2026-07-10 15:25 | agent | update | Final post-audit suite after adding wide-Unicode PTY coverage: 258 passed in 4.15s; git diff --check clean.
+2026-07-10 15:25 | human | complete | Task marked completed

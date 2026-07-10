@@ -8,6 +8,8 @@ import os
 import sys
 from typing import TypeAlias
 
+from prompt_toolkit.filters import is_done
+
 
 class SelectorUnavailableError(RuntimeError):
     """Raised when arrow-key selector UI cannot be used."""
@@ -218,6 +220,9 @@ def select_text(
                 vi_mode=False,
                 mandatory=False,
                 multiline=multiline,
+                # A wrapped final multiline answer makes prompt-toolkit emit one
+                # terminal height of whitespace. Keep wrapping while editing only.
+                wrap_lines=~is_done if multiline else True,
                 raise_keyboard_interrupt=True,
             ).execute()
     except KeyboardInterrupt:
