@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 from pathlib import Path
 from typing import Iterable
 
@@ -113,6 +114,18 @@ def _today() -> str:
     return dt.date.today().isoformat()
 
 
+def normalize_due_date(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", cleaned):
+        raise TaskValidationError("due_date must use YYYY-MM-DD format")
+    try:
+        return dt.date.fromisoformat(cleaned).isoformat()
+    except ValueError as exc:
+        raise TaskValidationError(f"Invalid due_date: {value}") from exc
+
+
 def _normalize_tags(tags: Iterable[str] | None) -> list[str]:
     if not tags:
         return []
@@ -199,6 +212,12 @@ class TaskService:
                 raise TaskValidationError(
                     f"Invalid spec_readiness for {task.metadata.task_name}"
                 )
+            try:
+                task.metadata.due_date = normalize_due_date(task.metadata.due_date)
+            except TaskValidationError as exc:
+                raise TaskValidationError(
+                    f"Invalid due_date for {task.metadata.task_name}: {task.metadata.due_date}"
+                ) from exc
 
         graph: dict[str, list[str]] = {}
         for task in tasks:
@@ -494,6 +513,7 @@ class TaskService:
         owner: str | None = None,
         tags: Iterable[str] | None = None,
         depends_on: Iterable[str] | None = None,
+        due_date: str | None = None,
         section_values: dict[str, str] | None = None,
     ) -> Task:
         self.validate_task_name(task_name)
@@ -508,6 +528,7 @@ class TaskService:
         today = _today()
         task_id = storage.next_task_id(self.tasks_root, today)
         dep_ids = self._resolve_dependency_refs(depends_on or [])
+        normalized_due_date = normalize_due_date(due_date)
 
         sections = storage.resolve_task_body_sections(self.tasks_root)
         body = _render_task_body(sections, summary, section_values=section_values)
@@ -517,6 +538,7 @@ class TaskService:
             task_name=task_name,
             status="todo",
             date_created=today,
+            due_date=normalized_due_date,
             priority=priority,
             effort=effort,
             spec_readiness=spec_readiness,
@@ -604,9 +626,14 @@ class TaskService:
         replace_tags: bool = False,
         depends_on: Iterable[str] | None = None,
         clear_depends_on: bool = False,
+        due_date: str | None = None,
+        clear_due_date: bool = False,
         section_values: dict[str, str] | None = None,
     ) -> Task:
         task = self._find_by_selector(selector, include_trash=False)
+        if due_date is not None and clear_due_date:
+            raise TaskValidationError("Cannot use due_date and clear_due_date together")
+        normalized_due_date = normalize_due_date(due_date)
 
         if status is not None:
             if status not in VALID_STATUSES:
@@ -641,6 +668,10 @@ class TaskService:
             task.metadata.spec_readiness = spec_readiness
         if owner is not None:
             task.metadata.owner = owner or None
+        if due_date is not None:
+            task.metadata.due_date = normalized_due_date
+        elif clear_due_date:
+            task.metadata.due_date = None
 
         if replace_tags:
             task.metadata.tags = _normalize_tags(tags)

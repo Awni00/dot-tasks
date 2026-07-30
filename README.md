@@ -116,14 +116,14 @@ uv pip install -e ".[dev]"
 | `init` | Create `.tasks/` and write/update managed config settings; can also append workflow guidance section AGENTS.md and install the skill via `npx skills`. | `dot-tasks init` |
 | `install-skill` | Install the canonical `dot-tasks` skill via `npx skills`. | `dot-tasks install-skill [--yes]` |
 | `add-agents-snippet` | Add or update the canonical `dot-tasks` section in AGENTS policy markdown. | `dot-tasks add-agents-snippet [--agents-file <path>] [--yes]` |
-| `create` | Add a new task to `todo/`. | `dot-tasks create <task_name> [--spec-readiness unspecified|rough|ready|autonomous]` |
+| `create` | Add a new task to `todo/`, optionally with a date-only due date. | `dot-tasks create <task_name> [--due-date YYYY-MM-DD] [--spec-readiness unspecified|rough|ready|autonomous]` |
 | `start` | Move a task to `doing/` and create `plan.md`. | `dot-tasks start <task_name>` |
 | `complete` | Move a task to `done/`. | `dot-tasks complete <task_name>` |
 | `list` | List tasks by status and optional tag filters (rich/plain/JSON depending on context). | `dot-tasks list [todo|doing|done|all] [--tag <tag> ...] [--json]` |
 | `tags` | Show task counts by tag with optional status filter (rich/plain/JSON depending on context). | `dot-tasks tags [todo|doing|done] [--sort count|name] [--json]` |
 | `view` | Show full details for one task, including clickable file links for `task.md`, `activity.md`, `plan.md`, and any extra files. | `dot-tasks view <task_name> [--json]` |
 | `graph` | Visualize task dependencies as a DAG in terminal output (`tree` or `layers` modes). | `dot-tasks graph [--mode tree|layers] [--include-done]` |
-| `update` | Update metadata, dependencies, tags, owner, effort, priority, or spec readiness. | `dot-tasks update <task_name> ...` |
+| `update` | Update metadata, dependencies, tags, owner, effort, priority, spec readiness, or due date. | `dot-tasks update <task_name> [--due-date YYYY-MM-DD|--clear-due-date] ...` |
 | `log-activity` | Append a manual activity note with optional actor override. | `dot-tasks log-activity <task_name> --note "..." [--actor agent]` |
 | `rename` | Rename a task. | `dot-tasks rename <task_name> <new_task_name>` |
 | `delete` | Move a task to `trash/`, or delete permanently with `--hard`. | `dot-tasks delete <task_name> [--hard]` |
@@ -131,6 +131,39 @@ uv pip install -e ".[dev]"
 Interactive `create` and interactive `update` use a single tag selector flow with an optional `+ add new tag(s)` path.
 
 Status filter supports `todo|doing` style multi-select and `all`. Default is `todo|doing`.
+
+### Optional due dates
+
+Due dates are stored in task frontmatter as an optional ISO `due_date: YYYY-MM-DD`.
+They contain no time or timezone. Explicit `create --due-date`, `update --due-date`,
+and `update --clear-due-date` options remain available for scripts regardless of
+the interactive feature setting.
+
+Due dates are enabled by default. Their interactive prompts and human-readable
+output can be disabled:
+
+```yaml
+settings:
+  due_dates:
+    enabled: true
+  list_table:
+    columns:
+      - name: task_name
+        width: 32
+      - name: due_date
+        width: 10
+```
+
+When due dates are enabled, `init` offers `due_date` in the list-column
+selector and selects it by default; users may unselect it. When due dates are
+disabled, the column is omitted from the selector and suppressed from list
+output. In Rich terminal output, dates before today render in red and dates due
+today render in orange for `todo` and `doing` tasks. Completed tasks are not
+highlighted.
+
+The interactive date picker starts at today after choosing to set a date.
+Use left/right to select year, month, or day; up/down to adjust it; type digits
+to replace a segment; and press Enter to accept.
 
 Tag examples:
 

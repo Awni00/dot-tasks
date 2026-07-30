@@ -93,9 +93,9 @@ dot-tasks view <task_name_or_id> --json                    # inspect one task
 dot-tasks tags [todo|doing|done] --json                    # tag counts/triage
 
 # lifecycle
-dot-tasks create <task_name> --summary "..." --priority [p1|p2|p3|p4] --effort [s|m|l|xl] --tag <tag>
+dot-tasks create <task_name> --summary "..." --priority [p1|p2|p3|p4] --effort [s|m|l|xl] --tag <tag> [--due-date YYYY-MM-DD]
 dot-tasks start <task_name_or_id>                          # move to doing + create plan.md
-dot-tasks update <task_name_or_id> --priority p1 --effort m --tag backend
+dot-tasks update <task_name_or_id> --priority p1 --effort m --tag backend [--due-date YYYY-MM-DD|--clear-due-date]
 dot-tasks log-activity <task_name_or_id> --note "Progress note" [--actor agent]
 dot-tasks complete <task_name_or_id>                       # move to done
 

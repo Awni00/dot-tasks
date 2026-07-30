@@ -29,6 +29,7 @@ class TaskMetadata:
     date_created: str
     date_started: str | None = None
     date_completed: str | None = None
+    due_date: str | None = None
     priority: str = "p2"
     effort: str = "m"
     spec_readiness: str = "unspecified"

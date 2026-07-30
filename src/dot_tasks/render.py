@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import datetime as dt
 import json
 from pathlib import Path
 from typing import Iterable
@@ -64,6 +65,7 @@ def _task_list_row(task: Task, unmet_count: int) -> dict[str, str]:
         "effort": task.metadata.effort,
         "spec_readiness": task.metadata.spec_readiness,
         "deps": _health_label(unmet_count),
+        "due_date": task.metadata.due_date or "-",
         "created": task.metadata.date_created,
         "completed": task.metadata.date_completed or "-",
     }
@@ -115,10 +117,40 @@ def _column_style(name: str) -> str:
     return ""
 
 
+def is_overdue(task: Task, *, today: dt.date | None = None) -> bool:
+    if task.metadata.status not in {"todo", "doing"} or not task.metadata.due_date:
+        return False
+    try:
+        due_date = dt.date.fromisoformat(task.metadata.due_date)
+    except ValueError:
+        return False
+    return due_date < (today or dt.date.today())
+
+
+def is_due_today(task: Task, *, today: dt.date | None = None) -> bool:
+    if task.metadata.status not in {"todo", "doing"} or not task.metadata.due_date:
+        return False
+    try:
+        due_date = dt.date.fromisoformat(task.metadata.due_date)
+    except ValueError:
+        return False
+    return due_date == (today or dt.date.today())
+
+
+def _due_date_highlight_style(task: Task, *, today: dt.date | None = None) -> str:
+    if is_overdue(task, today=today):
+        return "bold red"
+    if is_due_today(task, today=today):
+        return "bold orange3"
+    return ""
+
+
 def render_task_list_rich(
     tasks: Iterable[Task],
     unmet_counts: dict[str, int],
     columns: list[dict[str, int | str]],
+    *,
+    today: dt.date | None = None,
 ):
     from rich import box
     from rich.console import Group
@@ -189,6 +221,9 @@ def render_task_list_rich(
                 elif name == "deps":
                     deps_label, deps_style = _deps_rich_label(unmet_count)
                     rendered.append(Text(deps_label, style=deps_style))
+                elif name == "due_date":
+                    due_style = _due_date_highlight_style(task, today=today)
+                    rendered.append(Text(value, style=due_style or "dim"))
                 else:
                     rendered.append(value)
             table.add_row(*rendered)
@@ -711,17 +746,21 @@ def render_task_detail_plain(
     unmet_count: int,
     *,
     enable_links: bool = True,
+    show_due_date: bool = False,
 ) -> str:
     meta = task.metadata
     tags = ", ".join(meta.tags) if meta.tags else "-"
+    dates = (
+        f"created: {meta.date_created}    started: {meta.date_started or '-'}    "
+        f"completed: {meta.date_completed or '-'}"
+    )
+    if show_due_date:
+        dates += f"    due_date: {meta.due_date or '-'}"
     lines = [
         f"{meta.task_name} ({meta.task_id})",
         f"[{meta.status}] [{meta.priority}] [{meta.effort}] [deps: {_health_label(unmet_count)}]",
         f"owner: {meta.owner or '-'}    tags: {tags}",
-        (
-            f"created: {meta.date_created}    started: {meta.date_started or '-'}    "
-            f"completed: {meta.date_completed or '-'}"
-        ),
+        dates,
         f"depends_on: {_inline_dependency_rows(dependency_rows)}",
         f"blocked_by: {_inline_dependency_rows(blocked_by_rows)}",
         *_task_file_detail_lines_plain(task, enable_links=enable_links),
@@ -736,6 +775,9 @@ def render_task_detail_rich(
     dependency_rows: list[tuple[str, str, str]],
     blocked_by_rows: list[tuple[str, str, str]],
     unmet_count: int,
+    *,
+    show_due_date: bool = False,
+    today: dt.date | None = None,
 ):
     from rich.console import Group
     from rich.text import Text
@@ -765,6 +807,10 @@ def render_task_detail_rich(
         f"created: {meta.date_created}    started: {meta.date_started or '-'}    "
         f"completed: {meta.date_completed or '-'}"
     )
+    if show_due_date:
+        dates_line.append("    due_date: ")
+        due_style = _due_date_highlight_style(task, today=today)
+        dates_line.append(meta.due_date or "-", style=due_style)
     depends_line = Text(f"depends_on: {_inline_dependency_rows(dependency_rows)}")
     blocked_line = Text(f"blocked_by: {_inline_dependency_rows(blocked_by_rows)}")
     file_lines = _task_file_detail_lines_rich(task)

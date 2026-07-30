@@ -21,6 +21,51 @@ def test_resolve_list_table_columns_uses_defaults_when_missing(tmp_path: Path) -
     assert warnings == []
 
 
+def test_resolve_due_date_settings_defaults_when_missing(tmp_path: Path) -> None:
+    settings = storage.resolve_due_date_settings(tmp_path / ".tasks")
+
+    assert settings.enabled is True
+
+
+def test_resolve_due_date_settings_reads_valid_config(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    _write_config(
+        root,
+        (
+            "settings:\n"
+            "  due_dates:\n"
+            "    enabled: true\n"
+        ),
+    )
+
+    settings = storage.resolve_due_date_settings(root)
+
+    assert settings.enabled is True
+
+
+def test_resolve_due_date_settings_warns_and_defaults_invalid_values(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    _write_config(
+        root,
+        (
+            "settings:\n"
+            "  due_dates:\n"
+            "    enabled: yes-please\n"
+            "    color_mode: red\n"
+        ),
+    )
+    warnings: list[str] = []
+
+    settings = storage.resolve_due_date_settings(root, warn=warnings.append)
+
+    assert settings == storage.DueDateSettings()
+    assert any("settings.due_dates.enabled" in warning for warning in warnings)
+    assert any(
+        "Unsupported settings.due_dates key 'color_mode'" in warning
+        for warning in warnings
+    )
+
+
 def test_resolve_list_table_columns_reads_valid_custom_columns(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     _write_config(
@@ -52,6 +97,20 @@ def test_default_done_list_table_columns() -> None:
     assert len(names) == len(storage.default_list_column_names())
     completed_column = next(column for column in columns if column["name"] == "completed")
     assert completed_column["width"] == storage.LIST_TABLE_COLUMN_DEFAULT_WIDTHS["completed"]
+
+
+def test_done_list_defaults_work_when_due_dates_are_disabled() -> None:
+    columns = storage.apply_due_date_list_setting(
+        storage.default_list_table_columns(),
+        enabled=False,
+    )
+
+    updated = storage.apply_done_list_defaults(columns)
+    names = storage.list_column_names(updated)
+
+    assert "due_date" not in names
+    assert "deps" not in names
+    assert "completed" in names
 
 
 def test_next_task_id_uses_date_prefix_and_suffix(
@@ -240,7 +299,7 @@ def test_resolve_show_banner_reads_valid_bool(tmp_path: Path) -> None:
     assert storage.resolve_show_banner(root) is False
 
 
-def test_parse_task_backfills_missing_spec_readiness(tmp_path: Path) -> None:
+def test_parse_task_backfills_missing_optional_metadata(tmp_path: Path) -> None:
     task_dir = tmp_path / "todo" / "2026-02-24-legacy-task"
     task_dir.mkdir(parents=True, exist_ok=True)
     (task_dir / "task.md").write_text(
@@ -267,6 +326,7 @@ def test_parse_task_backfills_missing_spec_readiness(tmp_path: Path) -> None:
 
     task = storage.parse_task(task_dir)
     assert task.metadata.spec_readiness == "unspecified"
+    assert task.metadata.due_date is None
 
 
 def _leading_newline_count(text: str) -> int:

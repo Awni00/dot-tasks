@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import datetime as dt
 import sys
 from typing import Any, Callable
 
@@ -16,6 +17,7 @@ from .selector_ui import (
     select_fuzzy_many,
     select_many,
     select_one,
+    select_date,
     select_text,
 )
 from . import storage
@@ -72,6 +74,36 @@ def _safe_prompt(message: str, *, default: str = "", multiline: bool = False) ->
         return typer.prompt(fallback_message, default=default)
     except (typer.Abort, KeyboardInterrupt, EOFError):
         return None
+
+
+def _prompt_date(message: str, *, initial_value: dt.date | None = None) -> str | None:
+    initial = initial_value or dt.date.today()
+    try:
+        selected = select_date(message, initial_value=initial)
+    except SelectorUnavailableError as exc:
+        message_text = str(exc)
+        if message_text:
+            typer.echo(
+                f"Warning: {message_text}; falling back to an ISO date prompt.",
+                err=True,
+            )
+    else:
+        return selected.isoformat() if selected is not None else None
+
+    while True:
+        raw = _safe_prompt(message, default=initial.isoformat())
+        if raw is None:
+            return None
+        cleaned = raw.strip()
+        try:
+            parsed = dt.date.fromisoformat(cleaned)
+        except ValueError:
+            typer.echo("Invalid date. Use YYYY-MM-DD.")
+            continue
+        if parsed.isoformat() != cleaned:
+            typer.echo("Invalid date. Use YYYY-MM-DD.")
+            continue
+        return cleaned
 
 
 def _prompt_single_choice(title: str, options: list[tuple[str, str]], default_value: str) -> str | None:
@@ -413,6 +445,7 @@ def init_config_form(
     *,
     default_interactive_enabled: bool = storage.DEFAULT_INTERACTIVE_ENABLED,
     default_show_banner: bool = storage.DEFAULT_SHOW_BANNER,
+    default_due_dates_enabled: bool = storage.DEFAULT_DUE_DATES_ENABLED,
     default_list_column_names: list[str] | None = None,
     default_append_agents_snippet: bool = False,
     default_agents_file: str = "AGENTS.md",
@@ -441,6 +474,13 @@ def init_config_form(
     if banner_choice is None:
         return None
 
+    due_dates_enabled = _prompt_yes_no(
+        "Enable due dates?",
+        default=default_due_dates_enabled,
+    )
+    if due_dates_enabled is None:
+        return None
+
     width_map = dict(storage.LIST_TABLE_COLUMN_DEFAULT_WIDTHS)
     fallback_column_names = [name for name, _ in storage.DEFAULT_LIST_TABLE_COLUMNS]
     if default_list_column_names is None:
@@ -452,9 +492,23 @@ def init_config_form(
             if name in storage.LIST_TABLE_COLUMNS_SUPPORTED and name not in seen:
                 default_column_names.append(name)
                 seen.add(name)
+    supported_columns = [
+        name
+        for name in storage.LIST_TABLE_COLUMNS_SUPPORTED
+        if due_dates_enabled or name != "due_date"
+    ]
+    default_column_names = [
+        name for name in default_column_names if name in supported_columns
+    ]
+    if (
+        due_dates_enabled
+        and not default_due_dates_enabled
+        and "due_date" not in default_column_names
+    ):
+        default_column_names.append("due_date")
     column_options = [
         (name, f"{name} (width {width_map[name]})")
-        for name in storage.LIST_TABLE_COLUMNS_SUPPORTED
+        for name in supported_columns
     ]
     selected_columns = _prompt_multi_choice(
         "Select list columns",
@@ -481,10 +535,14 @@ def init_config_form(
             return None
         agents_file = selected_agents_file.strip() or default_agents_file
 
-    list_columns = [{"name": name, "width": width_map[name]} for name in selected_columns]
+    list_columns = storage.apply_due_date_list_setting(
+        [{"name": name, "width": width_map[name]} for name in selected_columns],
+        enabled=due_dates_enabled,
+    )
     return {
         "interactive_enabled": interactive_choice == "enabled",
         "show_banner": banner_choice == "enabled",
+        "due_dates_enabled": due_dates_enabled,
         "list_columns": list_columns,
         "append_agents_snippet": append_agents_snippet,
         "agents_file": agents_file,
@@ -496,6 +554,7 @@ def create_form(
     dependency_options: list[tuple[str, str]] | None = None,
     tag_options: list[tuple[str, str]] | None = None,
     task_body_sections: list[dict[str, str]] | None = None,
+    due_dates_enabled: bool = False,
     validate_task_name: Callable[[str], None] | None = None,
     validate_depends_on: Callable[[list[str]], None] | None = None,
 ) -> dict[str, Any] | None:
@@ -532,6 +591,15 @@ def create_form(
     )
     if effort is None:
         return None
+    due_date: str | None = None
+    if due_dates_enabled:
+        should_set_due_date = _prompt_yes_no("Set due date?", default=False)
+        if should_set_due_date is None:
+            return None
+        if should_set_due_date:
+            due_date = _prompt_date("due_date")
+            if due_date is None:
+                return None
     owner = _safe_prompt("owner", default="")
     if owner is None:
         return None
@@ -588,6 +656,7 @@ def create_form(
         "task_name": task_name,
         "priority": priority,
         "effort": effort,
+        "due_date": due_date,
         "owner": owner.strip() or None,
         "section_values": section_values,
         "spec_readiness": spec_readiness,
@@ -602,6 +671,7 @@ def update_form(
     tag_options: list[tuple[str, str]] | None = None,
     task_body_sections: list[dict[str, str]] | None = None,
     current_section_values: dict[str, str] | None = None,
+    due_dates_enabled: bool = False,
     validate_depends_on: Callable[[list[str]], None] | None = None,
 ) -> dict[str, Any] | None:
     dep_options = dependency_options or []
@@ -630,6 +700,31 @@ def update_form(
     )
     if effort is None:
         return None
+    due_date: str | None = None
+    clear_due_date = False
+    if due_dates_enabled:
+        due_date_action = _prompt_single_choice(
+            "due_date",
+            [
+                ("keep", "Keep current"),
+                ("set", "Set or change"),
+                ("clear", "Clear"),
+            ],
+            default_value="keep",
+        )
+        if due_date_action is None:
+            return None
+        if due_date_action == "set":
+            initial_due_date = (
+                dt.date.fromisoformat(task.metadata.due_date)
+                if task.metadata.due_date
+                else dt.date.today()
+            )
+            due_date = _prompt_date("due_date", initial_value=initial_due_date)
+            if due_date is None:
+                return None
+        elif due_date_action == "clear":
+            clear_due_date = True
     spec_readiness = _prompt_single_choice(
         "spec_readiness",
         [("__keep__", "Keep current"), *[(value, value) for value in VALID_SPEC_READINESS]],
@@ -685,6 +780,8 @@ def update_form(
         "status": None if status == "__keep__" else status,
         "priority": None if priority == "__keep__" else priority,
         "effort": None if effort == "__keep__" else effort,
+        "due_date": due_date,
+        "clear_due_date": clear_due_date,
         "spec_readiness": None if spec_readiness == "__keep__" else spec_readiness,
         "owner": owner,
         "section_values": section_values,

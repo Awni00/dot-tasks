@@ -116,6 +116,9 @@ def test_init_idempotent(tmp_path: Path) -> None:
     cfg = _read_config(root / "config.yaml")
     assert cfg["settings"]["interactive_enabled"] is True
     assert cfg["settings"]["show_banner"] is True
+    assert cfg["settings"]["due_dates"] == {
+        "enabled": True,
+    }
     assert cfg["settings"]["list_table"]["columns"] == storage.default_list_table_columns()
 
 
@@ -640,6 +643,104 @@ def test_create_accepts_spec_readiness(tmp_path: Path) -> None:
     assert meta["spec_readiness"] == "ready"
 
 
+def test_create_accepts_due_date_even_when_feature_disabled(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    cfg = _read_config(root / "config.yaml")
+    cfg["settings"]["due_dates"]["enabled"] = False
+    (root / "config.yaml").write_text(
+        yaml.safe_dump(cfg, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "create",
+            "dated-task",
+            "--due-date",
+            "2026-08-15",
+            "--tasks-root",
+            str(root),
+        ],
+    )
+
+    assert result.exit_code == 0
+    meta, _ = _read_task_md(_task_md_path(root, "todo", "dated-task"))
+    assert meta["due_date"] == "2026-08-15"
+    json_result = runner.invoke(app, ["view", "dated-task", "--json", "--tasks-root", str(root)])
+    assert '"due_date": "2026-08-15"' in json_result.output
+
+
+@pytest.mark.parametrize("due_date", ["2026-02-30", "20260228", "tomorrow"])
+def test_create_rejects_invalid_due_date(tmp_path: Path, due_date: str) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+
+    result = runner.invoke(
+        app,
+        ["create", "bad-date", "--due-date", due_date, "--tasks-root", str(root)],
+    )
+
+    assert result.exit_code == 1
+    assert "due_date" in result.output
+
+
+def test_update_sets_and_clears_due_date(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "dated-task", "--tasks-root", str(root)])
+
+    set_result = runner.invoke(
+        app,
+        [
+            "update",
+            "dated-task",
+            "--due-date",
+            "2026-08-15",
+            "--tasks-root",
+            str(root),
+        ],
+    )
+    assert set_result.exit_code == 0
+    meta, _ = _read_task_md(_task_md_path(root, "todo", "dated-task"))
+    assert meta["due_date"] == "2026-08-15"
+
+    clear_result = runner.invoke(
+        app,
+        ["update", "dated-task", "--clear-due-date", "--tasks-root", str(root)],
+    )
+    assert clear_result.exit_code == 0
+    meta, _ = _read_task_md(_task_md_path(root, "todo", "dated-task"))
+    assert meta["due_date"] is None
+
+
+def test_update_rejects_setting_and_clearing_due_date_together(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "dated-task", "--tasks-root", str(root)])
+
+    result = runner.invoke(
+        app,
+        [
+            "update",
+            "dated-task",
+            "--status",
+            "doing",
+            "--due-date",
+            "2026-08-15",
+            "--clear-due-date",
+            "--tasks-root",
+            str(root),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Cannot use due_date and clear_due_date together" in result.output
+    assert _task_md_path(root, "todo", "dated-task").exists()
+    assert not _task_dir(root, "doing", "dated-task").exists()
+
+
 def test_create_non_tty_uses_plain_renderer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
@@ -894,7 +995,7 @@ def test_view_non_tty_uses_plain_renderer(monkeypatch: pytest.MonkeyPatch, tmp_p
     monkeypatch.setattr("dot_tasks.cli._can_render_rich_detail_output", lambda: False)
     monkeypatch.setattr(
         "dot_tasks.cli.render.render_task_detail_plain",
-        lambda task, deps, blocked_by, unmet_count, *, enable_links=True: "PLAIN-DETAIL",
+        lambda task, deps, blocked_by, unmet_count, **kwargs: "PLAIN-DETAIL",
     )
     monkeypatch.setattr(
         "dot_tasks.cli.render.render_task_detail_rich",
@@ -920,7 +1021,7 @@ def test_view_tty_uses_rich_renderer(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     )
     monkeypatch.setattr(
         "dot_tasks.cli.render.render_task_detail_rich",
-        lambda task, deps, blocked_by, unmet_count: "RICH-DETAIL",
+        lambda task, deps, blocked_by, unmet_count, **kwargs: "RICH-DETAIL",
     )
     captured: list[object] = []
     monkeypatch.setattr("dot_tasks.cli._print_rich", lambda renderable: captured.append(renderable))
@@ -1457,7 +1558,7 @@ def test_list_tty_uses_rich_renderer(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     monkeypatch.setattr("dot_tasks.cli._can_render_rich_list_output", lambda: True)
     monkeypatch.setattr(
         "dot_tasks.cli.render.render_task_list_rich",
-        lambda tasks, unmet, columns: "RICH-OUT",
+        lambda tasks, unmet, columns, **kwargs: "RICH-OUT",
     )
     captured: list[object] = []
     monkeypatch.setattr("dot_tasks.cli._print_rich", lambda renderable: captured.append(renderable))
@@ -1598,7 +1699,78 @@ def test_list_non_tty_passes_configured_columns(
 
     result = runner.invoke(app, ["list", "--tasks-root", str(root)])
     assert result.exit_code == 0
-    assert captured_columns == [[{"name": "task_name", "width": 20}, {"name": "created", "width": 10}]]
+    assert captured_columns == [[
+        {"name": "task_name", "width": 20},
+        {"name": "created", "width": 10},
+    ]]
+
+
+def test_list_suppresses_due_date_column_when_feature_disabled(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(
+        app,
+        [
+            "create",
+            "hidden-due-date",
+            "--due-date",
+            "2026-08-15",
+            "--tasks-root",
+            str(root),
+        ],
+    )
+    cfg = _read_config(root / "config.yaml")
+    cfg["settings"]["due_dates"]["enabled"] = False
+    cfg["settings"]["list_table"]["columns"] = [
+        {"name": "task_name", "width": 20},
+        {"name": "due_date", "width": 10},
+    ]
+    (root / "config.yaml").write_text(
+        yaml.safe_dump(cfg, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["list", "--tasks-root", str(root)])
+
+    assert result.exit_code == 0
+    assert "hidden-due-date" in result.output
+    assert "due_date" not in result.output
+    assert "2026-08-15" not in result.output
+
+
+def test_list_and_view_show_due_date_when_enabled(tmp_path: Path) -> None:
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(
+        app,
+        [
+            "create",
+            "visible-due-date",
+            "--due-date",
+            "2026-08-15",
+            "--tasks-root",
+            str(root),
+        ],
+    )
+    cfg = _read_config(root / "config.yaml")
+    cfg["settings"]["due_dates"]["enabled"] = True
+    cfg["settings"]["list_table"]["columns"] = [
+        {"name": "task_name", "width": 20},
+        {"name": "due_date", "width": 10},
+    ]
+    (root / "config.yaml").write_text(
+        yaml.safe_dump(cfg, sort_keys=False),
+        encoding="utf-8",
+    )
+
+    list_result = runner.invoke(app, ["list", "--tasks-root", str(root)])
+    view_result = runner.invoke(app, ["view", "visible-due-date", "--tasks-root", str(root)])
+
+    assert list_result.exit_code == 0
+    assert "due_date" in list_result.output
+    assert "2026-08-15" in list_result.output
+    assert view_result.exit_code == 0
+    assert "due_date: 2026-08-15" in _strip_osc8(view_result.output)
 
 
 def test_list_tty_passes_configured_columns(
@@ -1625,7 +1797,7 @@ def test_list_tty_passes_configured_columns(
     monkeypatch.setattr("dot_tasks.cli._can_render_rich_list_output", lambda: True)
     captured_columns: list[list[dict[str, int | str]]] = []
 
-    def _fake_rich(tasks, unmet, columns):
+    def _fake_rich(tasks, unmet, columns, **kwargs):
         captured_columns.append(columns)
         return "RICH-OUT"
 
@@ -1636,7 +1808,10 @@ def test_list_tty_passes_configured_columns(
     result = runner.invoke(app, ["list", "--tasks-root", str(root)])
     assert result.exit_code == 0
     assert captured == ["RICH-OUT"]
-    assert captured_columns == [[{"name": "task_name", "width": 22}, {"name": "deps", "width": 12}]]
+    assert captured_columns == [[
+        {"name": "task_name", "width": 22},
+        {"name": "deps", "width": 12},
+    ]]
 
 
 def test_list_invalid_column_config_warns_and_uses_defaults(

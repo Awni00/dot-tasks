@@ -598,6 +598,10 @@ def init_cmd(
                 svc.tasks_root,
                 warn=_warn_config,
             )
+            current_due_date_settings = storage.resolve_due_date_settings(
+                svc.tasks_root,
+                warn=_warn_config,
+            )
             current_columns = storage.resolve_list_table_columns(
                 svc.tasks_root,
                 warn=_warn_config,
@@ -605,6 +609,7 @@ def init_cmd(
             form = init_config_form(
                 default_interactive_enabled=current_interactive_enabled,
                 default_show_banner=current_show_banner,
+                default_due_dates_enabled=current_due_date_settings.enabled,
                 default_list_column_names=[str(column["name"]) for column in current_columns],
                 default_append_agents_snippet=append_agents_snippet,
                 default_agents_file=str(agents_file) if agents_file is not None else "AGENTS.md",
@@ -613,6 +618,9 @@ def init_cmd(
                 _exit_canceled(1)
             selected_interactive_enabled = bool(form["interactive_enabled"])
             selected_show_banner = bool(form["show_banner"])
+            selected_due_dates_enabled = bool(
+                form.get("due_dates_enabled", current_due_date_settings.enabled)
+            )
             selected_list_columns = form["list_columns"]
             should_append_agents_snippet = bool(form.get("append_agents_snippet", append_agents_snippet))
             selected_agents_value = form.get("agents_file")
@@ -623,12 +631,14 @@ def init_cmd(
                 interactive_enabled=selected_interactive_enabled,
                 list_columns=selected_list_columns,
                 show_banner=selected_show_banner,
+                due_dates_enabled=selected_due_dates_enabled,
             )
             typer.echo(f"Initialized tasks root: {svc.tasks_root}")
             typer.echo(
                 f"{'Created' if status == 'created' else 'Updated'} config: {cfg_path} "
                 f"(interactive_enabled={selected_interactive_enabled}, "
-                f"show_banner={selected_show_banner})"
+                f"show_banner={selected_show_banner}, "
+                f"due_dates_enabled={selected_due_dates_enabled})"
             )
         else:
             typer.echo(f"Initialized tasks root: {svc.tasks_root}")
@@ -639,7 +649,8 @@ def init_cmd(
                 typer.echo(
                     f"{'Created' if status == 'created' else 'Updated'} config: {cfg_path} "
                     f"(interactive_enabled={storage.DEFAULT_INTERACTIVE_ENABLED}, "
-                    f"show_banner={storage.DEFAULT_SHOW_BANNER})"
+                    f"show_banner={storage.DEFAULT_SHOW_BANNER}, "
+                    f"due_dates_enabled={storage.DEFAULT_DUE_DATES_ENABLED})"
                 )
 
         if should_append_agents_snippet:
@@ -727,6 +738,7 @@ def create_cmd(
     owner: Annotated[str | None, typer.Option("--owner")] = None,
     tag: Annotated[list[str], typer.Option("--tag", help="Can be repeated")] = [],
     depends_on: Annotated[list[str], typer.Option("--depends-on", help="Task name or task_id")] = [],
+    due_date: Annotated[str | None, typer.Option("--due-date", help="Due date (YYYY-MM-DD)")] = None,
     summary: Annotated[str, typer.Option("--summary")] = "",
     nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
@@ -751,6 +763,7 @@ def create_cmd(
         local_owner = owner
         local_tags = list(tag)
         local_depends = list(depends_on)
+        local_due_date = due_date
         local_summary = summary
         local_section_values: dict[str, str] | None = None
 
@@ -759,11 +772,13 @@ def create_cmd(
             dependency_options = _dependency_choices(tasks)
             tag_options = _tag_choices(tasks)
             task_body_sections = storage.resolve_task_body_sections(svc.tasks_root)
+            due_date_settings = storage.resolve_due_date_settings(svc.tasks_root)
             form = create_form(
                 default_name=task_name,
                 dependency_options=dependency_options,
                 tag_options=tag_options,
                 task_body_sections=task_body_sections,
+                due_dates_enabled=due_date_settings.enabled,
                 validate_task_name=svc.validate_new_task_name,
                 validate_depends_on=lambda deps: svc.check_circular_dependencies(None, deps),
             )
@@ -776,6 +791,7 @@ def create_cmd(
             local_owner = form["owner"]
             local_tags = form["tags"]
             local_depends = form["depends_on"]
+            local_due_date = form.get("due_date")
             local_summary = form.get("summary", "")
             local_section_values = form.get("section_values")
 
@@ -791,6 +807,7 @@ def create_cmd(
             owner=local_owner,
             tags=local_tags,
             depends_on=local_depends,
+            due_date=local_due_date,
             section_values=local_section_values,
         )
         if _can_render_rich_detail_output():
@@ -883,6 +900,14 @@ def list_cmd(
             untagged_only=untagged,
         )
         list_columns = storage.resolve_list_table_columns(svc.tasks_root, warn=_warn_config)
+        due_date_settings = storage.resolve_due_date_settings(
+            svc.tasks_root,
+            warn=_warn_config,
+        )
+        list_columns = storage.apply_due_date_list_setting(
+            list_columns,
+            enabled=due_date_settings.enabled,
+        )
         if tasks and all(task.metadata.status == "completed" for task in tasks):
             list_columns = storage.apply_done_list_defaults(list_columns)
 
@@ -974,20 +999,49 @@ def view_cmd(
         if as_json:
             typer.echo(render.render_task_detail_json(task, deps))
         else:
+            due_date_settings = storage.resolve_due_date_settings(
+                svc.tasks_root,
+                warn=_warn_config,
+            )
             blocked_by = svc.blocked_by_rows(task)
             unmet_count, _ = svc.dependency_health(task)
             if _can_render_rich_detail_output():
-                _print_rich(render.render_task_detail_rich(task, deps, blocked_by, unmet_count))
-            else:
-                typer.echo(
-                    render.render_task_detail_plain(
-                        task,
-                        deps,
-                        blocked_by,
-                        unmet_count,
-                        enable_links=_can_interact(),
+                if due_date_settings.enabled:
+                    _print_rich(
+                        render.render_task_detail_rich(
+                            task,
+                            deps,
+                            blocked_by,
+                            unmet_count,
+                            show_due_date=True,
+                        )
                     )
-                )
+                else:
+                    _print_rich(
+                        render.render_task_detail_rich(task, deps, blocked_by, unmet_count)
+                    )
+            else:
+                if due_date_settings.enabled:
+                    typer.echo(
+                        render.render_task_detail_plain(
+                            task,
+                            deps,
+                            blocked_by,
+                            unmet_count,
+                            enable_links=_can_interact(),
+                            show_due_date=True,
+                        )
+                    )
+                else:
+                    typer.echo(
+                        render.render_task_detail_plain(
+                            task,
+                            deps,
+                            blocked_by,
+                            unmet_count,
+                            enable_links=_can_interact(),
+                        )
+                    )
 
     _run_and_handle(_inner)
 
@@ -1040,6 +1094,11 @@ def update_cmd(
     replace_tags: Annotated[bool, typer.Option("--replace-tags")] = False,
     depends_on: Annotated[list[str], typer.Option("--depends-on")] = [],
     clear_depends_on: Annotated[bool, typer.Option("--clear-depends-on")] = False,
+    due_date: Annotated[str | None, typer.Option("--due-date", help="Due date (YYYY-MM-DD)")] = None,
+    clear_due_date: Annotated[
+        bool,
+        typer.Option("--clear-due-date", help="Remove the due date"),
+    ] = False,
     nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
 ) -> None:
@@ -1063,6 +1122,8 @@ def update_cmd(
                 replace_tags,
                 bool(depends_on),
                 clear_depends_on,
+                due_date is not None,
+                clear_due_date,
             ]
         )
 
@@ -1083,6 +1144,8 @@ def update_cmd(
         local_replace_tags = replace_tags
         local_depends = list(depends_on)
         local_replace_depends = clear_depends_on
+        local_due_date = due_date
+        local_clear_due_date = clear_due_date
 
         open_form = _can_prompt(interactive_enabled) and (task_name is None or not has_edit_flags)
         local_section_values: dict[str, str] | None = None
@@ -1095,12 +1158,14 @@ def update_cmd(
             tag_options = _tag_choices(tasks)
             task_body_sections = storage.resolve_task_body_sections(svc.tasks_root)
             current_section_values = service._parse_body_sections(selected_task.body)
+            due_date_settings = storage.resolve_due_date_settings(svc.tasks_root)
             form = update_form(
                 selected_task,
                 dependency_options=dependency_options,
                 tag_options=tag_options,
                 task_body_sections=task_body_sections,
                 current_section_values=current_section_values,
+                due_dates_enabled=due_date_settings.enabled,
                 validate_depends_on=lambda deps: svc.check_circular_dependencies(selected_task.metadata.task_id, deps),
             )
             if form is None:
@@ -1114,6 +1179,8 @@ def update_cmd(
             local_replace_tags = True
             local_depends = list(form.get("depends_on") or [])
             local_replace_depends = bool(form.get("replace_depends_on"))
+            local_due_date = form.get("due_date")
+            local_clear_due_date = bool(form.get("clear_due_date"))
             local_section_values = form.get("section_values")
 
         task = svc.update_task(
@@ -1127,6 +1194,8 @@ def update_cmd(
             replace_tags=local_replace_tags,
             depends_on=local_depends,
             clear_depends_on=clear_depends_on or local_replace_depends,
+            due_date=local_due_date,
+            clear_due_date=local_clear_due_date,
             section_values=local_section_values,
         )
         typer.echo(f"Updated: {task.metadata.task_name}")

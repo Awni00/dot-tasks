@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import MISSING, fields
+from dataclasses import MISSING, dataclass, fields
 import datetime as dt
 from pathlib import Path
 import secrets
@@ -23,6 +23,14 @@ from .models import (
 TASK_META_KEYS = [f.name for f in fields(TaskMetadata)]
 DEFAULT_INTERACTIVE_ENABLED = True
 DEFAULT_SHOW_BANNER = True
+DEFAULT_DUE_DATES_ENABLED = True
+SUPPORTED_SETTINGS_KEYS = {
+    "interactive_enabled",
+    "show_banner",
+    "due_dates",
+    "list_table",
+    "task_body_sections",
+}
 DEFAULT_TASK_BODY_SECTIONS: list[dict[str, str]] = [
     {"name": "Summary", "default": "- TODO"},
     {"name": "Acceptance Criteria", "default": "- TODO"},
@@ -35,6 +43,7 @@ LIST_TABLE_COLUMNS_SUPPORTED = (
     "effort",
     "spec_readiness",
     "deps",
+    "due_date",
     "created",
     "completed",
 )
@@ -46,6 +55,7 @@ LIST_TABLE_COLUMN_DEFAULT_WIDTHS: dict[str, int] = {
     "effort": 6,
     "spec_readiness": 14,
     "deps": 12,
+    "due_date": 10,
     "created": 10,
     "completed": 12,
 }
@@ -55,6 +65,7 @@ DEFAULT_LIST_TABLE_COLUMNS: tuple[tuple[str, int], ...] = (
     ("task_name", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["task_name"]),
     ("priority", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["priority"]),
     ("effort", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["effort"]),
+    ("due_date", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["due_date"]),
     ("created", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["created"]),
     ("deps", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["deps"]),
 )
@@ -62,9 +73,15 @@ DEFAULT_DONE_LIST_TABLE_COLUMNS: tuple[tuple[str, int], ...] = (
     ("task_name", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["task_name"]),
     ("priority", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["priority"]),
     ("effort", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["effort"]),
+    ("due_date", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["due_date"]),
     ("created", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["created"]),
     ("completed", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["completed"]),
 )
+
+
+@dataclass(frozen=True)
+class DueDateSettings:
+    enabled: bool = DEFAULT_DUE_DATES_ENABLED
 
 
 def find_repo_root(start: Path) -> Path | None:
@@ -134,13 +151,27 @@ def default_list_column_names() -> list[str]:
     return [name for name, _ in DEFAULT_LIST_TABLE_COLUMNS]
 
 
+def apply_due_date_list_setting(
+    columns: list[dict[str, int | str]],
+    *,
+    enabled: bool,
+) -> list[dict[str, int | str]]:
+    if enabled:
+        return columns
+    return [column for column in columns if str(column["name"]) != "due_date"]
+
+
 def apply_done_list_defaults(
     columns: list[dict[str, int | str]],
 ) -> list[dict[str, int | str]]:
     names = list_column_names(columns)
     if "completed" in names:
         return columns
-    if names != default_list_column_names():
+    default_names = default_list_column_names()
+    default_names_without_due_date = [
+        name for name in default_names if name != "due_date"
+    ]
+    if tuple(names) not in {tuple(default_names), tuple(default_names_without_due_date)}:
         return columns
 
     updated: list[dict[str, int | str]] = []
@@ -162,6 +193,7 @@ def default_config(
     interactive_enabled: bool = DEFAULT_INTERACTIVE_ENABLED,
     list_columns: list[dict[str, int | str]] | None = None,
     show_banner: bool = DEFAULT_SHOW_BANNER,
+    due_dates_enabled: bool = DEFAULT_DUE_DATES_ENABLED,
     task_body_sections: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     return {
@@ -169,6 +201,7 @@ def default_config(
             interactive_enabled,
             list_columns,
             show_banner=show_banner,
+            due_dates_enabled=due_dates_enabled,
             task_body_sections=task_body_sections,
         )
     }
@@ -178,13 +211,20 @@ def build_managed_settings(
     interactive_enabled: bool = DEFAULT_INTERACTIVE_ENABLED,
     list_columns: list[dict[str, int | str]] | None = None,
     show_banner: bool = DEFAULT_SHOW_BANNER,
+    due_dates_enabled: bool = DEFAULT_DUE_DATES_ENABLED,
     task_body_sections: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     return {
         "interactive_enabled": interactive_enabled,
         "show_banner": show_banner,
+        "due_dates": {
+            "enabled": due_dates_enabled,
+        },
         "list_table": {
-            "columns": _default_list_table_columns(list_columns),
+            "columns": apply_due_date_list_setting(
+                _default_list_table_columns(list_columns),
+                enabled=due_dates_enabled,
+            ),
         },
         "task_body_sections": list(task_body_sections) if task_body_sections is not None else list(DEFAULT_TASK_BODY_SECTIONS),
     }
@@ -195,6 +235,7 @@ def merge_managed_config(
     interactive_enabled: bool = DEFAULT_INTERACTIVE_ENABLED,
     list_columns: list[dict[str, int | str]] | None = None,
     show_banner: bool = DEFAULT_SHOW_BANNER,
+    due_dates_enabled: bool = DEFAULT_DUE_DATES_ENABLED,
     task_body_sections: list[dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     merged = dict(existing_config) if isinstance(existing_config, dict) else {}
@@ -205,6 +246,7 @@ def merge_managed_config(
             interactive_enabled,
             list_columns,
             show_banner=show_banner,
+            due_dates_enabled=due_dates_enabled,
             task_body_sections=task_body_sections,
         )
     )
@@ -227,6 +269,7 @@ def upsert_init_config(
     interactive_enabled: bool = DEFAULT_INTERACTIVE_ENABLED,
     list_columns: list[dict[str, int | str]] | None = None,
     show_banner: bool = DEFAULT_SHOW_BANNER,
+    due_dates_enabled: bool = DEFAULT_DUE_DATES_ENABLED,
     task_body_sections: list[dict[str, str]] | None = None,
 ) -> Literal["created", "updated"]:
     path = config_path(tasks_root)
@@ -237,6 +280,7 @@ def upsert_init_config(
         interactive_enabled=interactive_enabled,
         list_columns=list_columns,
         show_banner=show_banner,
+        due_dates_enabled=due_dates_enabled,
         task_body_sections=task_body_sections,
     )
     write_config(tasks_root, merged)
@@ -248,6 +292,7 @@ def write_default_config_if_missing(
     interactive_enabled: bool = DEFAULT_INTERACTIVE_ENABLED,
     list_columns: list[dict[str, int | str]] | None = None,
     show_banner: bool = DEFAULT_SHOW_BANNER,
+    due_dates_enabled: bool = DEFAULT_DUE_DATES_ENABLED,
 ) -> bool:
     path = config_path(tasks_root)
     if path.exists():
@@ -258,6 +303,7 @@ def write_default_config_if_missing(
             interactive_enabled,
             list_columns=list_columns,
             show_banner=show_banner,
+            due_dates_enabled=due_dates_enabled,
         ),
     )
     return True
@@ -296,9 +342,8 @@ def resolve_interactive_enabled(
             warn(f"Invalid settings section in {config_path(tasks_root)}. Using defaults.")
         return DEFAULT_INTERACTIVE_ENABLED
 
-    supported_settings_keys = {"interactive_enabled", "show_banner", "list_table", "task_body_sections"}
     for key in settings.keys():
-        if key not in supported_settings_keys and warn is not None:
+        if key not in SUPPORTED_SETTINGS_KEYS and warn is not None:
             warn(f"Unsupported settings key '{key}' in {config_path(tasks_root)}. Ignoring.")
 
     interactive_enabled = settings.get("interactive_enabled")
@@ -330,9 +375,8 @@ def resolve_show_banner(
             warn(f"Invalid settings section in {config_path(tasks_root)}. Using defaults.")
         return DEFAULT_SHOW_BANNER
 
-    supported_settings_keys = {"interactive_enabled", "show_banner", "list_table", "task_body_sections"}
     for key in settings.keys():
-        if key not in supported_settings_keys and warn is not None:
+        if key not in SUPPORTED_SETTINGS_KEYS and warn is not None:
             warn(f"Unsupported settings key '{key}' in {config_path(tasks_root)}. Ignoring.")
 
     show_banner = settings.get("show_banner")
@@ -346,6 +390,56 @@ def resolve_show_banner(
             )
         return DEFAULT_SHOW_BANNER
     return show_banner
+
+
+def resolve_due_date_settings(
+    tasks_root: Path,
+    warn: Callable[[str], None] | None = None,
+) -> DueDateSettings:
+    data = read_config(tasks_root, warn=warn)
+    supported_top_keys = {"settings"}
+    for key in data.keys():
+        if key not in supported_top_keys and warn is not None:
+            warn(f"Unsupported config key '{key}' in {config_path(tasks_root)}. Ignoring.")
+
+    settings = data.get("settings", {})
+    if not isinstance(settings, dict):
+        if warn is not None:
+            warn(f"Invalid settings section in {config_path(tasks_root)}. Using defaults.")
+        return DueDateSettings()
+
+    for key in settings.keys():
+        if key not in SUPPORTED_SETTINGS_KEYS and warn is not None:
+            warn(f"Unsupported settings key '{key}' in {config_path(tasks_root)}. Ignoring.")
+
+    due_dates = settings.get("due_dates")
+    if due_dates is None:
+        return DueDateSettings()
+    if not isinstance(due_dates, dict):
+        if warn is not None:
+            warn(
+                f"Invalid settings.due_dates section in {config_path(tasks_root)}. "
+                "Using defaults."
+            )
+        return DueDateSettings()
+
+    supported_due_date_keys = {"enabled"}
+    for key in due_dates:
+        if key not in supported_due_date_keys and warn is not None:
+            warn(
+                f"Unsupported settings.due_dates key '{key}' in "
+                f"{config_path(tasks_root)}. Ignoring."
+            )
+
+    enabled = due_dates.get("enabled", DEFAULT_DUE_DATES_ENABLED)
+    if not isinstance(enabled, bool):
+        if warn is not None:
+            warn(
+                f"Invalid settings.due_dates.enabled in {config_path(tasks_root)}. "
+                f"Using default '{DEFAULT_DUE_DATES_ENABLED}'."
+            )
+        enabled = DEFAULT_DUE_DATES_ENABLED
+    return DueDateSettings(enabled=enabled)
 
 
 def resolve_list_table_columns(
@@ -365,9 +459,8 @@ def resolve_list_table_columns(
             warn(f"Invalid settings section in {config_path(tasks_root)}. Using defaults.")
         return defaults
 
-    supported_settings_keys = {"interactive_enabled", "show_banner", "list_table", "task_body_sections"}
     for key in settings.keys():
-        if key not in supported_settings_keys and warn is not None:
+        if key not in SUPPORTED_SETTINGS_KEYS and warn is not None:
             warn(f"Unsupported settings key '{key}' in {config_path(tasks_root)}. Ignoring.")
 
     list_table = settings.get("list_table")
@@ -465,9 +558,8 @@ def resolve_task_body_sections(
             warn(f"Invalid settings section in {config_path(tasks_root)}. Using defaults.")
         return defaults
 
-    supported_settings_keys = {"interactive_enabled", "show_banner", "list_table", "task_body_sections"}
     for key in settings.keys():
-        if key not in supported_settings_keys and warn is not None:
+        if key not in SUPPORTED_SETTINGS_KEYS and warn is not None:
             warn(f"Unsupported settings key '{key}' in {config_path(tasks_root)}. Ignoring.")
 
     sections = settings.get("task_body_sections")

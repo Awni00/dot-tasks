@@ -387,6 +387,87 @@ def test_init_config_form_uses_passed_defaults(monkeypatch: pytest.MonkeyPatch) 
     assert payload["list_columns"] == [{"name": "status", "width": 10}]
 
 
+def test_init_config_form_configures_due_dates(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: "enabled")
+    captured_options: list[tuple[str, str]] = []
+    captured_defaults: list[str] = []
+
+    def _multi_choice(title, options, default_values=None):
+        captured_options.extend(options)
+        captured_defaults.extend(default_values or [])
+        return ["task_name"]
+
+    monkeypatch.setattr(prompt_ui, "_prompt_multi_choice", _multi_choice)
+    yes_no_titles: list[str] = []
+
+    def _yes_no(title: str, *, default: bool = False) -> bool:
+        yes_no_titles.append(title)
+        if title == "Enable due dates?":
+            return True
+        return False
+
+    monkeypatch.setattr(prompt_ui, "_prompt_yes_no", _yes_no)
+
+    payload = prompt_ui.init_config_form()
+
+    assert payload is not None
+    assert payload["due_dates_enabled"] is True
+    assert all("Highlight" not in title for title in yes_no_titles)
+    assert any(value == "due_date" for value, _ in captured_options)
+    assert "due_date" in captured_defaults
+    assert payload["list_columns"] == [
+        {"name": "task_name", "width": 32},
+    ]
+
+
+def test_init_config_form_hides_due_date_column_when_feature_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: "enabled")
+    captured_options: list[tuple[str, str]] = []
+
+    def _multi_choice(title, options, default_values=None):
+        captured_options.extend(options)
+        return ["task_name"]
+
+    monkeypatch.setattr(prompt_ui, "_prompt_multi_choice", _multi_choice)
+    monkeypatch.setattr(prompt_ui, "_prompt_yes_no", lambda *args, **kwargs: False)
+
+    payload = prompt_ui.init_config_form()
+
+    assert payload is not None
+    assert payload["due_dates_enabled"] is False
+    assert all(value != "due_date" for value, _ in captured_options)
+    assert storage.list_column_names(payload["list_columns"]) == ["task_name"]
+
+
+def test_init_config_form_preselects_due_date_when_reenabling_feature(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: "enabled")
+    captured_defaults: list[str] = []
+
+    def _multi_choice(title, options, default_values=None):
+        captured_defaults.extend(default_values or [])
+        return list(default_values or [])
+
+    monkeypatch.setattr(prompt_ui, "_prompt_multi_choice", _multi_choice)
+
+    def _yes_no(title: str, *, default: bool = False) -> bool:
+        return title == "Enable due dates?"
+
+    monkeypatch.setattr(prompt_ui, "_prompt_yes_no", _yes_no)
+
+    payload = prompt_ui.init_config_form(
+        default_due_dates_enabled=False,
+        default_list_column_names=["task_name", "created"],
+    )
+
+    assert payload is not None
+    assert "due_date" in captured_defaults
+    assert "due_date" in storage.list_column_names(payload["list_columns"])
+
+
 def test_init_config_form_falls_back_to_numeric_on_selector_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -400,7 +481,7 @@ def test_init_config_form_falls_back_to_numeric_on_selector_unavailable(
         "select_many",
         lambda *args, **kwargs: (_ for _ in ()).throw(selector_ui.SelectorUnavailableError("fallback")),
     )
-    prompt_values = iter(["1", "1", "1,4,5", "n"])
+    prompt_values = iter(["1", "1", "n", "1,4,5", "n"])
     monkeypatch.setattr(prompt_ui.typer, "prompt", lambda *args, **kwargs: next(prompt_values))
 
     payload = prompt_ui.init_config_form()
@@ -425,7 +506,10 @@ def test_init_config_form_empty_columns_falls_back_to_defaults(
     payload = prompt_ui.init_config_form()
     assert payload is not None
     assert payload["show_banner"] is True
-    assert payload["list_columns"] == storage.default_list_table_columns()
+    assert payload["list_columns"] == storage.apply_due_date_list_setting(
+        storage.default_list_table_columns(),
+        enabled=False,
+    )
     captured = capsys.readouterr()
     assert "Warning: no list columns selected; using defaults." in captured.err
 
@@ -461,7 +545,10 @@ def test_init_config_form_empty_selection_uses_fallback_defaults_even_with_inval
     payload = prompt_ui.init_config_form(default_list_column_names=["not-a-column"])
     assert payload is not None
     assert payload["show_banner"] is True
-    assert payload["list_columns"] == storage.default_list_table_columns()
+    assert payload["list_columns"] == storage.apply_due_date_list_setting(
+        storage.default_list_table_columns(),
+        enabled=False,
+    )
 
 
 def test_init_config_form_cancel_on_banner_choice_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -521,6 +608,51 @@ def test_create_form_reprompts_for_invalid_task_name(
         "Error: task_name must be kebab-case with lowercase letters, numbers, and hyphens"
         in capsys.readouterr().err
     )
+
+
+def test_create_form_prompts_for_due_date_only_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    choices = iter(["p2", "m", "unspecified"])
+    prompts = iter(["dated-task", ""])
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: next(prompts))
+    monkeypatch.setattr(prompt_ui, "_prompt_tags", lambda *args, **kwargs: [])
+    monkeypatch.setattr(prompt_ui, "_prompt_yes_no", lambda *args, **kwargs: True)
+    monkeypatch.setattr(prompt_ui, "_prompt_date", lambda *args, **kwargs: "2026-08-15")
+
+    payload = prompt_ui.create_form(
+        default_name="dated-task",
+        dependency_options=[],
+        due_dates_enabled=True,
+    )
+
+    assert payload is not None
+    assert payload["due_date"] == "2026-08-15"
+
+
+def test_create_form_skips_due_date_prompt_when_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    choices = iter(["p2", "m", "unspecified"])
+    prompts = iter(["undated-task", ""])
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: next(prompts))
+    monkeypatch.setattr(prompt_ui, "_prompt_tags", lambda *args, **kwargs: [])
+    monkeypatch.setattr(
+        prompt_ui,
+        "_prompt_yes_no",
+        lambda *args, **kwargs: pytest.fail("due date prompt shown while disabled"),
+    )
+
+    payload = prompt_ui.create_form(
+        default_name="undated-task",
+        dependency_options=[],
+        due_dates_enabled=False,
+    )
+
+    assert payload is not None
+    assert payload["due_date"] is None
 
 
 def test_create_form_reprompts_for_duplicate_task_name(
@@ -1160,6 +1292,46 @@ def test_update_form_depends_on_uses_defaults(monkeypatch: pytest.MonkeyPatch) -
     assert payload["depends_on"] == ["t-2"]
     assert payload["replace_depends_on"] is True
     assert "note" not in payload
+
+
+def test_update_form_can_set_due_date(monkeypatch: pytest.MonkeyPatch) -> None:
+    choices = iter(["__keep__", "__keep__", "__keep__", "set", "__keep__"])
+    task = _task("alpha")
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: "")
+    monkeypatch.setattr(prompt_ui, "_prompt_tags", lambda *args, **kwargs: [])
+    monkeypatch.setattr(prompt_ui, "_prompt_date", lambda *args, **kwargs: "2026-08-15")
+
+    payload = prompt_ui.update_form(
+        task,
+        dependency_options=[],
+        tag_options=[],
+        due_dates_enabled=True,
+    )
+
+    assert payload is not None
+    assert payload["due_date"] == "2026-08-15"
+    assert payload["clear_due_date"] is False
+
+
+def test_update_form_can_clear_due_date(monkeypatch: pytest.MonkeyPatch) -> None:
+    choices = iter(["__keep__", "__keep__", "__keep__", "clear", "__keep__"])
+    task = _task("alpha")
+    task.metadata.due_date = "2026-08-15"
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
+    monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: "")
+    monkeypatch.setattr(prompt_ui, "_prompt_tags", lambda *args, **kwargs: [])
+
+    payload = prompt_ui.update_form(
+        task,
+        dependency_options=[],
+        tag_options=[],
+        due_dates_enabled=True,
+    )
+
+    assert payload is not None
+    assert payload["due_date"] is None
+    assert payload["clear_due_date"] is True
 
 
 def test_update_form_dependency_gate_no_skips_selector(monkeypatch: pytest.MonkeyPatch) -> None:

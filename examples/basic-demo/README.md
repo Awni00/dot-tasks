@@ -16,7 +16,7 @@ pip install -e .
 cd examples/basic-demo
 ```
 
-The first `dot-tasks init` in a new workspace writes `.tasks/config.yaml` with `settings.interactive_enabled`, `settings.show_banner`, and `settings.list_table.columns`.
+The first `dot-tasks init` in a new workspace writes `.tasks/config.yaml` with `settings.interactive_enabled`, `settings.show_banner`, enabled-by-default `settings.due_dates` behavior, and `settings.list_table.columns`. The due-date column is offered and preselected while the feature is enabled, and hidden while disabled.
 In interactive terminals, `init` uses selector prompts (including checkbox multi-select) to configure these managed values, can optionally append the canonical `dot-tasks` task-management section to an AGENTS policy file, and can optionally run `npx skills add Awni00/dot-tasks --skill dot-tasks`.
 Re-running interactive `dot-tasks init` updates managed config values; `--nointeractive` skips optional interactive integrations (and only appends AGENTS guidance when `--append-agents-snippet` is explicitly provided).
 You can also run these integrations directly outside `init`:
@@ -33,6 +33,7 @@ Interactive pickers support keyboard navigation in prompt mode:
 - dependency selectors support fuzzy search + multiselect (`space` or `tab` to toggle, `enter` to submit)
 - other multi-select prompts still use list navigation with `space` to toggle
 - in `dot-tasks create`, dependency selection is optional and only shown if you choose to set dependencies
+- when due dates are enabled, the segmented date picker uses left/right for fields and up/down for values
 - if selector UI is unavailable, prompts automatically fall back to numeric entry
 - `Ctrl+C` cleanly backs out of interactive prompts
 

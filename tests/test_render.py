@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import datetime as dt
+import io
 from pathlib import Path
 import re
 
@@ -23,6 +25,7 @@ def _task(
     task_id: str,
     created: str,
     completed: str | None = None,
+    due_date: str | None = None,
 ) -> Task:
     return Task(
         metadata=TaskMetadata(
@@ -31,6 +34,7 @@ def _task(
             status=status,
             date_created=created,
             date_completed=completed,
+            due_date=due_date,
             priority=priority,
             effort="m",
         ),
@@ -125,6 +129,84 @@ def test_render_task_list_plain_supports_completed_column() -> None:
     output = render.render_task_list_plain(tasks, unmet, columns)
     assert "completed" in output.splitlines()[0]
     assert "2026-02-23" in output
+
+
+def test_render_task_list_plain_supports_due_date_column() -> None:
+    task = _task(
+        "dated-task",
+        "todo",
+        "p2",
+        "t-20260222-001",
+        "2026-02-22",
+        due_date="2026-08-15",
+    )
+
+    output = render.render_task_list_plain(
+        [task],
+        {task.metadata.task_id: 0},
+        _columns(("task_name", 16), ("due_date", 10)),
+    )
+
+    assert "due_date" in output.splitlines()[0]
+    assert "2026-08-15" in output
+
+
+def test_render_task_list_rich_highlights_only_open_overdue_dates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pytest.importorskip("rich")
+    from rich.console import Console
+
+    monkeypatch.delenv("NO_COLOR", raising=False)
+    overdue = _task(
+        "overdue",
+        "todo",
+        "p2",
+        "t-1",
+        "2026-07-01",
+        due_date="2026-07-01",
+    )
+    completed = _task(
+        "completed",
+        "completed",
+        "p2",
+        "t-2",
+        "2026-07-01",
+        completed="2026-07-10",
+        due_date="2026-07-01",
+    )
+    due_today = _task(
+        "due-today",
+        "doing",
+        "p2",
+        "t-3",
+        "2026-07-01",
+        due_date="2026-07-29",
+    )
+    output = io.StringIO()
+    console = Console(
+        file=output,
+        force_terminal=True,
+        color_system="256",
+        width=80,
+    )
+
+    console.print(
+        render.render_task_list_rich(
+            [overdue, completed, due_today],
+            {"t-1": 0, "t-2": 0, "t-3": 0},
+            _columns(("task_name", 16), ("due_date", 10)),
+            today=dt.date(2026, 7, 29),
+        )
+    )
+    ansi = output.getvalue()
+
+    assert render.is_overdue(overdue, today=dt.date(2026, 7, 29)) is True
+    assert render.is_overdue(completed, today=dt.date(2026, 7, 29)) is False
+    assert render.is_due_today(due_today, today=dt.date(2026, 7, 29)) is True
+    assert render.is_due_today(completed, today=dt.date(2026, 7, 29)) is False
+    assert re.search(r"\x1b\[[0-9;]*31m2026-07-01", ansi)
+    assert re.search(r"\x1b\[[0-9;]*38;5;\d+m2026-07-29", ansi)
 
 
 def test_render_task_list_rich_sections_and_labels() -> None:
@@ -489,6 +571,31 @@ def test_render_task_detail_plain_uses_dash_for_empty_fields(tmp_path: Path) -> 
     assert "task.md" in linked_labels
     assert "activity.md" in linked_labels
     assert "plan.md" not in linked_labels
+
+
+def test_render_task_detail_plain_optionally_shows_due_date(tmp_path: Path) -> None:
+    task = _task(
+        "dated-task",
+        "todo",
+        "p2",
+        "t-1",
+        "2026-07-01",
+        due_date="2026-08-15",
+    )
+    task.task_dir = tmp_path
+
+    hidden = render.render_task_detail_plain(task, [], [], 0, enable_links=False)
+    visible = render.render_task_detail_plain(
+        task,
+        [],
+        [],
+        0,
+        enable_links=False,
+        show_due_date=True,
+    )
+
+    assert "due_date:" not in hidden
+    assert "due_date: 2026-08-15" in visible
 
 
 def test_render_task_detail_plain_extra_unavailable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

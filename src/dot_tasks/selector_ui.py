@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+import calendar
+import datetime as dt
 import os
 import sys
 from typing import TypeAlias
@@ -26,8 +28,97 @@ class SelectionSeparator:
     label: str
 
 
+@dataclass
+class DatePickerState:
+    value: dt.date
+    segment: int = 0
+    input_buffer: str = ""
+    error: str | None = None
+
+
 SelectOneOption: TypeAlias = tuple[str, str] | SelectionSeparator
 SelectStyle: TypeAlias = dict[str, str] | None
+DATE_SEGMENTS = ("year", "month", "day")
+DATE_SEGMENT_WIDTHS = (4, 2, 2)
+
+
+def _clamped_date(year: int, month: int, day: int) -> dt.date:
+    clamped_day = min(day, calendar.monthrange(year, month)[1])
+    return dt.date(year, month, clamped_day)
+
+
+def adjust_date_segment(value: dt.date, segment: int, delta: int) -> dt.date:
+    if segment == 0:
+        year = max(1, min(9999, value.year + delta))
+        return _clamped_date(year, value.month, value.day)
+    if segment == 1:
+        month_index = (value.year - 1) * 12 + (value.month - 1) + delta
+        month_index = max(0, min(9999 * 12 - 1, month_index))
+        year_zero_based, month_zero_based = divmod(month_index, 12)
+        return _clamped_date(year_zero_based + 1, month_zero_based + 1, value.day)
+    if segment == 2:
+        try:
+            return value + dt.timedelta(days=delta)
+        except OverflowError:
+            return dt.date.max if delta > 0 else dt.date.min
+    raise ValueError(f"Unknown date segment: {segment}")
+
+
+def replace_date_segment(value: dt.date, segment: int, replacement: int) -> dt.date:
+    if segment == 0:
+        if not 1 <= replacement <= 9999:
+            raise ValueError("year must be between 0001 and 9999")
+        return _clamped_date(replacement, value.month, value.day)
+    if segment == 1:
+        if not 1 <= replacement <= 12:
+            raise ValueError("month must be between 01 and 12")
+        return _clamped_date(value.year, replacement, value.day)
+    if segment == 2:
+        max_day = calendar.monthrange(value.year, value.month)[1]
+        if not 1 <= replacement <= max_day:
+            raise ValueError(f"day must be between 01 and {max_day:02d}")
+        return dt.date(value.year, value.month, replacement)
+    raise ValueError(f"Unknown date segment: {segment}")
+
+
+def commit_date_buffer(state: DatePickerState) -> bool:
+    if not state.input_buffer:
+        state.error = None
+        return True
+    try:
+        replacement = int(state.input_buffer)
+        state.value = replace_date_segment(state.value, state.segment, replacement)
+    except ValueError as exc:
+        state.error = str(exc)
+        return False
+    state.input_buffer = ""
+    state.error = None
+    return True
+
+
+def _date_picker_fragments(state: DatePickerState, message: str) -> list[tuple[str, str]]:
+    values = (
+        f"{state.value.year:04d}",
+        f"{state.value.month:02d}",
+        f"{state.value.day:02d}",
+    )
+    fragments: list[tuple[str, str]] = [("bold", f"? {message}  ")]
+    for index, value in enumerate(values):
+        if index:
+            fragments.append(("", "-"))
+        display = value
+        style = ""
+        if index == state.segment:
+            if state.input_buffer:
+                display = state.input_buffer.ljust(DATE_SEGMENT_WIDTHS[index], "_")
+            style = "reverse"
+            if state.error:
+                style = "fg:ansired reverse"
+        fragments.append((style, display))
+    fragments.append(("fg:ansibrightblack", "  ←/→ field  ↑/↓ value  Enter accept"))
+    if state.error:
+        fragments.extend([("", "\n"), ("fg:ansired", f"  {state.error}")])
+    return fragments
 
 
 def _run_prompt_handlers(handlers: object, event: object) -> None:
@@ -235,6 +326,104 @@ def select_text(
     if result is None:
         return None
     return str(result)
+
+
+def select_date(
+    message: str,
+    *,
+    initial_value: dt.date | None = None,
+) -> dt.date | None:
+    """Return a date from a segmented prompt, or None when canceled."""
+    _ensure_tty()
+    try:
+        from prompt_toolkit.application import Application
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.layout import Layout
+        from prompt_toolkit.layout.containers import Window
+        from prompt_toolkit.layout.controls import FormattedTextControl
+    except Exception as exc:  # pragma: no cover - environment dependent
+        raise SelectorUnavailableError("prompt_toolkit date selector unavailable") from exc
+
+    state = DatePickerState(initial_value or dt.date.today())
+    key_bindings = KeyBindings()
+
+    def _move_segment(delta: int) -> None:
+        if not commit_date_buffer(state):
+            return
+        state.segment = (state.segment + delta) % len(DATE_SEGMENTS)
+
+    @key_bindings.add("left")
+    @key_bindings.add("s-tab")
+    def _select_previous(event: object) -> None:
+        _move_segment(-1)
+
+    @key_bindings.add("right")
+    @key_bindings.add("tab")
+    def _select_next(event: object) -> None:
+        _move_segment(1)
+
+    @key_bindings.add("up")
+    def _increment(event: object) -> None:
+        if commit_date_buffer(state):
+            state.value = adjust_date_segment(state.value, state.segment, 1)
+
+    @key_bindings.add("down")
+    def _decrement(event: object) -> None:
+        if commit_date_buffer(state):
+            state.value = adjust_date_segment(state.value, state.segment, -1)
+
+    @key_bindings.add("backspace")
+    def _backspace(event: object) -> None:
+        state.input_buffer = state.input_buffer[:-1]
+        state.error = None
+
+    def _type_digit(digit: str) -> None:
+        width = DATE_SEGMENT_WIDTHS[state.segment]
+        if len(state.input_buffer) >= width:
+            state.input_buffer = ""
+        state.input_buffer += digit
+        state.error = None
+        if len(state.input_buffer) == width and commit_date_buffer(state):
+            state.segment = (state.segment + 1) % len(DATE_SEGMENTS)
+
+    def _digit_handler(digit: str):
+        def _handler(event: object) -> None:
+            _type_digit(digit)
+
+        return _handler
+
+    for digit in "0123456789":
+        key_bindings.add(digit)(_digit_handler(digit))
+
+    @key_bindings.add("enter")
+    def _accept(event: object) -> None:
+        if commit_date_buffer(state):
+            event.app.exit(result=state.value)  # type: ignore[attr-defined]
+
+    @key_bindings.add("c-c")
+    @key_bindings.add("escape")
+    def _cancel(event: object) -> None:
+        event.app.exit(result=None)  # type: ignore[attr-defined]
+
+    control = FormattedTextControl(
+        text=lambda: _date_picker_fragments(state, message),
+        focusable=True,
+        show_cursor=False,
+    )
+    app: Application[dt.date | None] = Application(
+        layout=Layout(Window(content=control, height=2)),
+        key_bindings=key_bindings,
+        full_screen=False,
+        mouse_support=False,
+    )
+    try:
+        with _no_cpr_env():
+            result = app.run()
+    except (KeyboardInterrupt, EOFError):
+        return None
+    except Exception as exc:
+        raise SelectorUnavailableError("date selector runtime failed") from exc
+    return result
 
 
 def select_fuzzy(
