@@ -2450,6 +2450,7 @@ def test_create_empty_summary_uses_default(tmp_path: Path) -> None:
     _, body = _read_task_md(task_dir / "task.md")
     assert "## Summary" in body
     assert "- TODO" in body
+    assert "## Acceptance Criteria" not in body
 
 
 def test_init_nointeractive_config_includes_task_body_sections(tmp_path: Path) -> None:
@@ -2461,7 +2462,6 @@ def test_init_nointeractive_config_includes_task_body_sections(tmp_path: Path) -
     sections = cfg["settings"]["task_body_sections"]
     assert sections == [
         {"name": "Summary", "default": "- TODO"},
-        {"name": "Acceptance Criteria", "default": "- TODO"},
     ]
 
 

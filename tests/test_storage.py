@@ -392,7 +392,6 @@ def test_resolve_task_body_sections_defaults_when_missing(tmp_path: Path) -> Non
     sections = storage.resolve_task_body_sections(root, warn=warnings.append)
     assert sections == [
         {"name": "Summary", "default": "- TODO"},
-        {"name": "Acceptance Criteria", "default": "- TODO"},
     ]
     assert warnings == []
 

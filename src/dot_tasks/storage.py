@@ -33,7 +33,6 @@ SUPPORTED_SETTINGS_KEYS = {
 }
 DEFAULT_TASK_BODY_SECTIONS: list[dict[str, str]] = [
     {"name": "Summary", "default": "- TODO"},
-    {"name": "Acceptance Criteria", "default": "- TODO"},
 ]
 LIST_TABLE_COLUMNS_SUPPORTED = (
     "task_name",
