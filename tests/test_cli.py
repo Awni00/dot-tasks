@@ -741,6 +741,67 @@ def test_update_rejects_setting_and_clearing_due_date_together(tmp_path: Path) -
     assert not _task_dir(root, "doing", "dated-task").exists()
 
 
+def test_hand_written_unquoted_dates_are_read_as_iso_strings(tmp_path: Path) -> None:
+    # Purpose: users editing task.md by hand write `due_date: 2026-03-01` unquoted, which YAML
+    # parses as a date object; reading, rendering, JSON output and mutating commands must all
+    # still work and see the ISO string.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "hand-dated", "--tasks-root", str(root)])
+    task_md = _task_md_path(root, "todo", "hand-dated")
+    text = task_md.read_text(encoding="utf-8")
+    text = re.sub(r"date_created: '(\d{4}-\d{2}-\d{2})'", r"date_created: \1", text)
+    text = text.replace("due_date: null", "due_date: 2026-03-01")
+    task_md.write_text(text, encoding="utf-8")
+
+    list_result = runner.invoke(app, ["list", "--json", "--tasks-root", str(root)])
+    view_result = runner.invoke(app, ["view", "hand-dated", "--json", "--tasks-root", str(root)])
+    plain_view = runner.invoke(app, ["view", "hand-dated", "--tasks-root", str(root)])
+    create_result = runner.invoke(app, ["create", "another-task", "--tasks-root", str(root)])
+
+    assert list_result.exit_code == 0, list_result.output
+    assert '"due_date": "2026-03-01"' in list_result.output
+    assert view_result.exit_code == 0, view_result.output
+    assert '"due_date": "2026-03-01"' in view_result.output
+    assert plain_view.exit_code == 0, plain_view.output
+    assert create_result.exit_code == 0, create_result.output
+
+
+def test_mutating_command_does_not_rewrite_unchanged_task_files(tmp_path: Path) -> None:
+    # Purpose: a command on one task must not reformat other, unchanged task files (e.g. adding
+    # `due_date: null` to legacy files that predate the field).
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "legacy-task", "--tasks-root", str(root)])
+    legacy_md = _task_md_path(root, "todo", "legacy-task")
+    legacy_text = legacy_md.read_text(encoding="utf-8").replace("due_date: null\n", "")
+    legacy_md.write_text(legacy_text, encoding="utf-8")
+
+    result = runner.invoke(app, ["create", "new-task", "--tasks-root", str(root)])
+
+    assert result.exit_code == 0, result.output
+    assert legacy_md.read_text(encoding="utf-8") == legacy_text
+
+
+def test_mutating_command_still_rewrites_tasks_whose_derived_state_changes(tmp_path: Path) -> None:
+    # Purpose: skipping unchanged writes must not skip real changes: adding a dependent task
+    # must still update the dependency's `blocked_by` in its file.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "base-task", "--tasks-root", str(root)])
+    base_md = _task_md_path(root, "todo", "base-task")
+
+    result = runner.invoke(
+        app,
+        ["create", "child-task", "--depends-on", "base-task", "--tasks-root", str(root)],
+    )
+
+    assert result.exit_code == 0, result.output
+    child_meta, _ = _read_task_md(_task_md_path(root, "todo", "child-task"))
+    base_meta, _ = _read_task_md(base_md)
+    assert base_meta["blocked_by"] == [child_meta["task_id"]]
+
+
 def test_create_non_tty_uses_plain_renderer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])

@@ -21,6 +21,7 @@ from .models import (
 
 
 TASK_META_KEYS = [f.name for f in fields(TaskMetadata)]
+TASK_DATE_KEYS = ("date_created", "date_started", "date_completed", "due_date")
 DEFAULT_INTERACTIVE_ENABLED = True
 DEFAULT_SHOW_BANNER = True
 DEFAULT_DUE_DATES_ENABLED = True
@@ -626,7 +627,7 @@ def render_frontmatter(data: dict[str, Any], body: str) -> str:
         if key in data:
             ordered[key] = data[key]
     dumped = yaml.safe_dump(ordered, sort_keys=False, default_flow_style=False).strip()
-    body = body.lstrip("\n").rstrip() + "\n"
+    body = _normalize_body(body) + "\n"
     return f"---\n{dumped}\n---\n\n{body}"
 
 
@@ -634,6 +635,14 @@ def parse_task(task_dir: Path) -> Task:
     task_md = task_dir / "task.md"
     text = task_md.read_text(encoding="utf-8")
     data, body = split_frontmatter(text)
+    # YAML parses unquoted dates (e.g. `due_date: 2026-03-01`) as date objects;
+    # the rest of the code expects ISO strings.
+    for key in TASK_DATE_KEYS:
+        value = data.get(key)
+        if isinstance(value, dt.datetime):
+            data[key] = value.date().isoformat()
+        elif isinstance(value, dt.date):
+            data[key] = value.isoformat()
     payload: dict[str, Any] = {}
     missing_required: list[str] = []
     for field in fields(TaskMetadata):
@@ -657,6 +666,31 @@ def write_task(task: Task) -> None:
     task.task_dir.mkdir(parents=True, exist_ok=True)
     text = render_frontmatter(task.metadata.to_dict(), task.body)
     task.task_md_path.write_text(text, encoding="utf-8")
+
+
+def write_task_if_changed(task: Task) -> bool:
+    """Write *task* unless its file already holds the same metadata and body.
+
+    Avoids rewriting untouched task files, which would otherwise churn their
+    formatting (e.g. adding newly introduced keys such as ``due_date: null``).
+    """
+    if task.task_md_path.exists():
+        try:
+            on_disk = parse_task(task.task_dir)
+        except Exception:
+            on_disk = None
+        if (
+            on_disk is not None
+            and on_disk.metadata == task.metadata
+            and _normalize_body(on_disk.body) == _normalize_body(task.body)
+        ):
+            return False
+    write_task(task)
+    return True
+
+
+def _normalize_body(body: str) -> str:
+    return body.lstrip("\n").rstrip()
 
 
 def append_activity(task: Task, actor: str, kind: str, note: str, when: dt.datetime | None = None) -> None:

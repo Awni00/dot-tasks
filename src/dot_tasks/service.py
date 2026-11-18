@@ -310,7 +310,7 @@ class TaskService:
 
     def _persist_tasks(self, tasks: Iterable[Task]) -> None:
         for task in tasks:
-            storage.write_task(task)
+            storage.write_task_if_changed(task)
 
     def _snapshot_with(self, updated: Task) -> list[Task]:
         tasks = self._all_active()
