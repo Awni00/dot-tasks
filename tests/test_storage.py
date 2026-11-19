@@ -27,6 +27,17 @@ def test_resolve_due_date_settings_defaults_when_missing(tmp_path: Path) -> None
     assert settings.enabled is True
 
 
+def test_resolve_due_date_settings_reports_whether_section_is_configured(tmp_path: Path) -> None:
+    # Purpose: init needs to tell a legacy config (no `due_dates` section, enabled only by
+    # default) from one where the user explicitly enabled due dates.
+    root = tmp_path / ".tasks"
+    _write_config(root, "settings:\n  show_banner: true\n")
+    assert storage.resolve_due_date_settings(root).configured is False
+
+    _write_config(root, "settings:\n  due_dates:\n    enabled: true\n")
+    assert storage.resolve_due_date_settings(root).configured is True
+
+
 def test_resolve_due_date_settings_reads_valid_config(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     _write_config(

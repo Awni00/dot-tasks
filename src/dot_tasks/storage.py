@@ -82,6 +82,9 @@ DEFAULT_DONE_LIST_TABLE_COLUMNS: tuple[tuple[str, int], ...] = (
 @dataclass(frozen=True)
 class DueDateSettings:
     enabled: bool = DEFAULT_DUE_DATES_ENABLED
+    # True when config.yaml sets a valid `settings.due_dates.enabled` (False for configs
+    # written before due dates existed, or when the value is invalid and defaulted).
+    configured: bool = False
 
 
 def find_repo_root(start: Path) -> Path | None:
@@ -431,15 +434,17 @@ def resolve_due_date_settings(
                 f"{config_path(tasks_root)}. Ignoring."
             )
 
-    enabled = due_dates.get("enabled", DEFAULT_DUE_DATES_ENABLED)
+    if "enabled" not in due_dates:
+        return DueDateSettings()
+    enabled = due_dates["enabled"]
     if not isinstance(enabled, bool):
         if warn is not None:
             warn(
                 f"Invalid settings.due_dates.enabled in {config_path(tasks_root)}. "
                 f"Using default '{DEFAULT_DUE_DATES_ENABLED}'."
             )
-        enabled = DEFAULT_DUE_DATES_ENABLED
-    return DueDateSettings(enabled=enabled)
+        return DueDateSettings()
+    return DueDateSettings(enabled=enabled, configured=True)
 
 
 def resolve_list_table_columns(

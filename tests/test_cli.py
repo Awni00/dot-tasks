@@ -160,6 +160,32 @@ def test_init_interactive_uses_form_values(monkeypatch: pytest.MonkeyPatch, tmp_
     ]
 
 
+def test_init_interactive_reports_legacy_due_date_config_to_form(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Purpose: init must tell the form that a config predating due dates has no `due_dates`
+    # section, so the form can preselect the due_date column for upgrading users.
+    root = tmp_path / ".tasks"
+    root.mkdir()
+    (root / "config.yaml").write_text(
+        "settings:\n  list_table:\n    columns:\n    - name: task_name\n      width: 32\n",
+        encoding="utf-8",
+    )
+    captured: dict = {}
+
+    def _form(**kwargs):
+        captured.update(kwargs)
+        return None
+
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr("dot_tasks.cli.init_config_form", _form)
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+
+    assert captured["default_due_dates_enabled"] is True
+    assert captured["due_dates_configured"] is False
+    assert captured["default_list_column_names"] == ["task_name"]
+
+
 def test_init_interactive_updates_existing_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)

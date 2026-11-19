@@ -446,6 +446,7 @@ def init_config_form(
     default_interactive_enabled: bool = storage.DEFAULT_INTERACTIVE_ENABLED,
     default_show_banner: bool = storage.DEFAULT_SHOW_BANNER,
     default_due_dates_enabled: bool = storage.DEFAULT_DUE_DATES_ENABLED,
+    due_dates_configured: bool = True,
     default_list_column_names: list[str] | None = None,
     default_append_agents_snippet: bool = False,
     default_agents_file: str = "AGENTS.md",
@@ -500,9 +501,13 @@ def init_config_form(
     default_column_names = [
         name for name in default_column_names if name in supported_columns
     ]
+    # Preselect due_date when due dates are newly enabled: either re-enabled, or enabled
+    # by default for a config that predates the setting. A user who explicitly enabled
+    # due dates before keeps their column choice.
+    previously_enabled_explicitly = default_due_dates_enabled and due_dates_configured
     if (
         due_dates_enabled
-        and not default_due_dates_enabled
+        and not previously_enabled_explicitly
         and "due_date" not in default_column_names
     ):
         default_column_names.append("due_date")

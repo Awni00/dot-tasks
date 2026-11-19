@@ -610,6 +610,7 @@ def init_cmd(
                 default_interactive_enabled=current_interactive_enabled,
                 default_show_banner=current_show_banner,
                 default_due_dates_enabled=current_due_date_settings.enabled,
+                due_dates_configured=current_due_date_settings.configured,
                 default_list_column_names=[str(column["name"]) for column in current_columns],
                 default_append_agents_snippet=append_agents_snippet,
                 default_agents_file=str(agents_file) if agents_file is not None else "AGENTS.md",

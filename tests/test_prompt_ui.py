@@ -468,6 +468,58 @@ def test_init_config_form_preselects_due_date_when_reenabling_feature(
     assert "due_date" in storage.list_column_names(payload["list_columns"])
 
 
+def _run_init_form_keeping_column_defaults(
+    monkeypatch: pytest.MonkeyPatch, **form_kwargs
+) -> tuple[list[str], dict]:
+    """Run init_config_form with due dates enabled, accepting the preselected columns."""
+    monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: "enabled")
+    captured_defaults: list[str] = []
+
+    def _multi_choice(title, options, default_values=None):
+        captured_defaults.extend(default_values or [])
+        return list(default_values or [])
+
+    monkeypatch.setattr(prompt_ui, "_prompt_multi_choice", _multi_choice)
+    monkeypatch.setattr(
+        prompt_ui, "_prompt_yes_no", lambda title, *, default=False: title == "Enable due dates?"
+    )
+    payload = prompt_ui.init_config_form(**form_kwargs)
+    assert payload is not None
+    return captured_defaults, payload
+
+
+def test_init_config_form_preselects_due_date_for_config_predating_due_dates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Purpose: a config written before due dates existed has no `due_dates` section (enabled by
+    # default) and explicit columns without due_date; re-running init must offer the column.
+    captured_defaults, payload = _run_init_form_keeping_column_defaults(
+        monkeypatch,
+        default_due_dates_enabled=True,
+        due_dates_configured=False,
+        default_list_column_names=["task_name", "created"],
+    )
+
+    assert "due_date" in captured_defaults
+    assert "due_date" in storage.list_column_names(payload["list_columns"])
+
+
+def test_init_config_form_respects_removed_due_date_column_when_explicitly_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Purpose: a user who explicitly enabled due dates but dropped the column keeps that
+    # choice; init must not re-add the column.
+    captured_defaults, payload = _run_init_form_keeping_column_defaults(
+        monkeypatch,
+        default_due_dates_enabled=True,
+        due_dates_configured=True,
+        default_list_column_names=["task_name", "created"],
+    )
+
+    assert "due_date" not in captured_defaults
+    assert "due_date" not in storage.list_column_names(payload["list_columns"])
+
+
 def test_init_config_form_falls_back_to_numeric_on_selector_unavailable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
