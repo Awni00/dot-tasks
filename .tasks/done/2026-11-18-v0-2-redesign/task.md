@@ -1,18 +1,18 @@
 ---
 task_id: t-20261118-J3EK
 task_name: v0-2-redesign
-status: doing
+summary: ''
+status: completed
 date_created: '2026-11-18'
 date_started: '2026-11-19'
-date_completed: null
+date_completed: '2026-11-19'
+depends_on: []
+tags: []
 due_date: null
 priority: p1
 effort: l
 spec_readiness: ready
-depends_on: []
-blocked_by: []
 owner: null
-tags: []
 ---
 
 ## Summary
