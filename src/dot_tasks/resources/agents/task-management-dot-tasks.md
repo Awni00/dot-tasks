@@ -1,27 +1,9 @@
 <!-- dot-tasks:begin task-management -->
 ## Task management with `dot-tasks`
 
-`dot-tasks` is a Python CLI (assumed installed) that tracks human/agent work in a repo-local `.tasks/` directory. Use `dot-tasks` for non-trivial work so task specs and progress stay in repo files.
+This project tracks work with the `dot-tasks` CLI in `.tasks/`. **This project's task workflow is in `.tasks/README.md`; read it before working on a task.**
 
-- Use the "dot-tasks" skill for full behavior details.
-- Prefer `dot-tasks` commands over manual edits to `.tasks/` state files.
-
-Default workflow:
-
-Use `dot-tasks` for non-trivial work tracked in `.tasks/`.
-
-Trigger the `dot-tasks` skill when:
-1. User asks what to work on next.
-2. User asks to begin/resume an existing task.
-3. User asks for significant new work (create and bind a task).
-
-The skill is the source of truth for workflow details (triage, readiness checks, clarification flow, and lifecycle execution).
-
-Guardrails:
-- Prefer `dot-tasks` commands over manual `.tasks/` edits.
-- Confirm task binding with the user before tracked execution.
-- Keep `activity.md` append-only.
-- Use `dot-tasks rename/delete` for maintenance operations.
-
-Lifecycle (high-level): `create -> start -> log-activity -> complete`.
+- Change task state (create, start, update, complete, rename, delete) only through `dot-tasks` commands; edit the `task.md` body and other task files directly.
+- Refer to tasks by name or id, never by folder path (`dot-tasks path <task>` resolves one).
+- Use the `dot-tasks` skill for the command reference.
 <!-- dot-tasks:end task-management -->

@@ -1,126 +1,46 @@
 ---
 name: dot-tasks
-description: Reference skill for users integrating dot-tasks into AI coding agents. Defines a structured workflow for working on and tracking tasks. Use dot-tasks to track tasks in `.tasks/` with clear, auditable state for humans and agents.
+description: Reference for repositories that track work with the dot-tasks CLI in a repo-local `.tasks/` directory. Use when finding, starting, updating or completing a tracked task, or when deciding whether new work should become a task.
 ---
 
-# dot-tasks Skill
+# dot-tasks
 
-`dot-tasks` is a Python CLI (assumed installed) that tracks human/agent work in a repo-local `.tasks/` directory.
+`dot-tasks` is a Python CLI (assumed installed) that tracks human and agent work in a repo-local `.tasks/` directory.
 
-Use this skill whenever a repository uses `dot-tasks` for task lifecycle tracking.
+**This project's task workflow is in `.tasks/README.md`. Read it before working on a task, and follow it.** It says when to create tasks, which files a task keeps, and what to record when wrapping up. This skill only describes the tool.
 
-## When To Use
+## Data model
 
-- Use this skill when the user asks for task suggestions based on existing `dot-tasks` state.
-- Use this skill when the user asks to begin or resume work on an existing task.
-- Use this skill when the user asks for significant new work that should likely be tracked.
+- Each task is a folder `.tasks/<todo|doing|done|trash>/<created-date>-<task_name>/`. The folder moves when the status changes.
+- `task.md` holds YAML frontmatter (task_id, task_name, status, dates, priority, effort, spec_readiness, owner, tags, depends_on, blocked_by, due_date) and a Markdown body. The body starts from the sections in `settings.task_body_sections` of `.tasks/config.yaml`.
+- The tool writes nothing else. Any other file in a task folder (plans, notes, session records, ...) belongs to the project and is described in `.tasks/README.md`.
 
-## Plan Mode Deliverables
+## State vs content
 
-By default, when asked to work on a task, produce both artifacts in order:
-1. Develop/refine the task specification and write it to `spec.md`.
-2. Develop the implementation plan and write it to `plan.md`.
-
-- `plan.md` must be based on a current, user-confirmed `spec.md`.
-- Exceptions:
-  - If explicitly asked for spec-only work, produce/update only `spec.md`.
-  - If resuming from a completed `spec.md`, validate it is still current, then produce/update `plan.md`.
-- Artifact scope:
-  - `spec.md`: A precise, testable statement of what must be built, including scope, requirements, interfaces, and acceptance criteria.
-  - `plan.md`: An ordered execution strategy for how to build it, including steps, dependencies, checkpoints, and risk mitigations.
-
-## Workflow 1: Suggest What To Work On Next
-
-1. Discover candidate work:
-   - Run `dot-tasks list todo --json` (or `dot-tasks list --json` if status is not specified).
-   - Inspect likely top candidates with `dot-tasks view <task_name_or_id> --json`.
-2. Rank candidates using this rubric:
-   - Higher priority first (`p1` before `p2`, etc).
-   - Prefer unblocked tasks (`dependency_health: ready`) over blocked work.
-   - Note spec readiness and effort when suggesting tasks to user.
-3. Return the top few options with one-line rationale each.
-4. If high-priority work is blocked, call that out explicitly and include:
-   - A short unblock path for the blocked item.
-   - A suggested unblocked fallback task.
-
-## Workflow 2: Begin Or Resume Existing Task
-
-1. Resolve the target task:
-   - If the user provides `task_name`/`task_id`, run `dot-tasks view <task_name_or_id> --json`.
-   - If ambiguous, list likely matches and confirm the target with the user before binding.
-2. Branch by task status:
-   - `doing`: resume by reading `spec.md`, `plan.md`, and recent `activity.md`, then continue from the latest checkpoint.
-   - `todo`: run readiness checks before starting.
-   - `done`: do not silently restart; ask whether to create a follow-up task or reopen scope explicitly.
-3. Ensure spec is ready before planning implementation
-4. If intent is unclear, ask directed open-ended questions in two stages to clarify intent and develop clear spec. Do not proceed on unstated assumptions when high-level intent is unclear.
-
-## Workflow 3: Significant New Work
-
-1. Detect whether the request is substantial (multi-file, plan-heavy, or likely >=30 minutes).
-2. If substantial, ask whether to create and bind a new `dot-tasks` task.
-3. If the user agrees:
-   - Create task with `dot-tasks create ...` (include summary and basic metadata).
-   - Confirm the tracking target and bind work to that task.
-4. If work is quick/simple, do not force task creation unless the user asks.
-
-## Shared Task Lifecycle Loop
-
-For tracked task execution (regardless of how it was triggered), follow:
-`create -> spec -> confirm -> start -> plan -> log-activity -> complete`
-
-- Follow Plan Mode Deliverables.
-- Start active execution with `dot-tasks start`: sets status to `doing` and creates empty `plan.md`.
-- If Plan Mode/intent work produced a finalized spec artifact, sync that Markdown to `spec.md` on the first execution turn after Plan Mode.
-- If Plan Mode produced a finalized `<proposed_plan>`, sync that  Markdown to `plan.md` on the first execution turn after Plan Mode, after spec confirmation.
-- Keep `plan.md` current as implementation decisions become concrete.
-- Log meaningful progress with `dot-tasks log-activity --note`.
-- Log meaningful progress with `dot-tasks log-activity --note`.
-- For major tasks, document decisions made during implementation in a `decisions.md` artifact; include key decision rationale and alternative choices considered. Add "# NOTE: " comments in code for significant decisions. For major decisions, pause and ask user for direction before proceeding. Report back to user at end of execution with a summary of decisions made.
-- Use `dot-tasks update` for mid-flight metadata/scope/priority changes.
-- Before `dot-tasks complete`, confirm acceptance criteria are satisfied.
+- **State** (frontmatter and folder location) changes only through commands: `create`, `start`, `complete`, `update`, `rename`, `delete`. Never edit frontmatter or move task folders by hand.
+- **Content** (the `task.md` body and every other file in the task folder) is edited directly, like any file. No command is needed.
+- Refer to tasks by name or id, never by folder path. `dot-tasks path <task>` prints the current folder.
 
 ## Commands
 
 ```bash
-# setup
-dot-tasks init                                              # initialize .tasks/
+dot-tasks list [todo|doing|done|all] [--tag <tag>] --json   # find tasks (default: todo|doing)
+dot-tasks view <task> --json                                 # one task, including its path
+dot-tasks path <task>                                        # absolute task folder
+dot-tasks tags --json                                        # tag counts
+dot-tasks graph                                              # dependency graph
 
-# discover
-dot-tasks list --json                                       # list tasks for matching
-dot-tasks list [todo|doing|done] --json                    # narrow by status
-dot-tasks view <task_name_or_id> --json                    # inspect one task
-dot-tasks tags [todo|doing|done] --json                    # tag counts/triage
-
-# lifecycle
-dot-tasks create <task_name> --summary "..." --priority [p1|p2|p3|p4] --effort [s|m|l|xl] --tag <tag> [--due-date YYYY-MM-DD]
-dot-tasks start <task_name_or_id>                          # move to doing + create plan.md
-dot-tasks update <task_name_or_id> --priority p1 --effort m --tag backend [--due-date YYYY-MM-DD|--clear-due-date]
-dot-tasks log-activity <task_name_or_id> --note "Progress note" [--actor agent]
-dot-tasks complete <task_name_or_id>                       # move to done
-
-# maintenance
-dot-tasks rename <task_name_or_id> <new_task_name>         # rename task
-dot-tasks delete <task_name_or_id>                         # soft-delete to trash
+dot-tasks create <task_name> --summary "..." [--priority p0|p1|p2|p3] [--effort s|m|l|xl] [--tag <tag>] [--depends-on <task>] [--due-date YYYY-MM-DD]
+dot-tasks start <task>                                       # todo -> doing (checks dependencies; --force overrides)
+dot-tasks update <task> [--priority ...] [--tag ...] [--depends-on ...] [--status todo|doing|completed] ...
+dot-tasks complete <task>                                    # -> done
+dot-tasks rename <task> <new_task_name>
+dot-tasks delete <task>                                      # move to trash (--hard deletes)
 ```
+
+`<task>` is a task name or task_id. Pass `--nointeractive` in agent sessions so commands never wait for a prompt.
 
 ## Guardrails
 
-- Prefer `dot-tasks` commands over direct edits to task state files.
-- Avoid silent auto-binding on fuzzy matches.
-- Confirm task binding with the user before tracked execution.
-- Apply ordering/default/exception behavior from Plan Mode Deliverables.
-- Direct file edits are allowed for:
-  1. `task.md` for writing task summary/specs after `dot-tasks create`.
-  2. `spec.md`: A precise, testable statement of what must be built, including scope, requirements, interfaces, and acceptance criteria.
-  3. `plan.md`: An ordered execution strategy for how to build it, including steps, dependencies, checkpoints, and risk mitigations.
-  4. Other task-local artifacts (for example `walkthrough.md`, `decisions.md`, `handoff.md`) only when useful for scope and naturally produced during the session; confirm with the user before non-trivial additions, and do not manufacture extra artifacts for small/self-contained tasks.
-- Do not rewrite `activity.md` history; append only.
-- Respect dependency checks.
-
-## Data Contract
-
-- Canonical metadata is in `task.md` frontmatter.
-- Dependency references use `task_id` in metadata.
-- Dependencies are displayed to humans as `task_name (task_id)`.
-- `activity.md` line format is `YYYY-MM-DD HH:MM | actor | type | note`.
+- Confirm with the user which task you are working on before starting or completing it; do not bind to a fuzzy match silently.
+- Do not restart a `done` task silently; ask whether to create a follow-up task instead.

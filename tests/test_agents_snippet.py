@@ -61,3 +61,12 @@ def test_upsert_task_management_snippet_reports_unchanged_when_already_present(t
     target.write_text(snippet, encoding="utf-8")
     status = agents_snippet.upsert_task_management_snippet(target, snippet)
     assert status == "unchanged"
+
+
+def test_snippet_and_skill_point_agents_to_workflow_doc() -> None:
+    # Purpose: since 0.2.0 the CLI never mentions .tasks/README.md, so the AGENTS snippet and
+    # the skill are the only pointers to the project's workflow doc; both must state it plainly.
+    pointer = "This project's task workflow is in `.tasks/README.md`"
+    skill = Path(__file__).resolve().parents[1] / "agent-tools" / "skills" / "dot-tasks" / "SKILL.md"
+    assert pointer in agents_snippet.load_task_management_snippet()
+    assert pointer in skill.read_text(encoding="utf-8")

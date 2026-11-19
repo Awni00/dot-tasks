@@ -5,6 +5,13 @@
 This directory is a safe, pre-populated demo workspace for `dot-tasks`.
 Run commands from here to explore task lifecycle features without touching another project's `.tasks`.
 
+What it contains:
+
+- `.tasks/<todo|doing|done>/…/task.md`: four sample tasks (state in frontmatter, description in the body).
+- `.tasks/doing/2026-02-03-document-command-help/plan.md`: an example of a project-owned file. dot-tasks itself only writes `task.md`; which other files a task keeps is up to the project.
+- `.tasks/README.md`: the demo project's workflow doc, saying when to create tasks and which files they keep.
+- `AGENTS.md`: the canonical `dot-tasks` section, which points agents at `.tasks/README.md`.
+
 ## Setup
 
 From the repository root:
@@ -16,7 +23,7 @@ pip install -e .
 cd examples/basic-demo
 ```
 
-The first `dot-tasks init` in a new workspace writes `.tasks/config.yaml` with `settings.interactive_enabled`, `settings.show_banner`, enabled-by-default `settings.due_dates` behavior, and `settings.list_table.columns`. The due-date column is offered and preselected while the feature is enabled, and hidden while disabled.
+The first `dot-tasks init` in a new workspace writes a starter `.tasks/README.md` (the project's workflow doc, only if missing) and `.tasks/config.yaml` with `settings.interactive_enabled`, `settings.show_banner`, enabled-by-default `settings.due_dates` behavior, and `settings.list_table.columns`. The due-date column is offered and preselected while the feature is enabled, and hidden while disabled.
 In interactive terminals, `init` uses selector prompts (including checkbox multi-select) to configure these managed values, can optionally append the canonical `dot-tasks` task-management section to an AGENTS policy file, and can optionally run `npx skills add Awni00/dot-tasks --skill dot-tasks`.
 Re-running interactive `dot-tasks init` updates managed config values; `--nointeractive` skips optional interactive integrations (and only appends AGENTS guidance when `--append-agents-snippet` is explicitly provided).
 You can also run these integrations directly outside `init`:
@@ -72,11 +79,11 @@ Expected snippet:
 build-nightly-report (t-20260206-001)
 [todo] [p0] [l] [deps: blocked(1)]
 owner: alex    tags: reporting, automation
-created: 2026-02-06    started: -    completed: -
+created: 2026-02-06    started: -    completed: -    due_date: -
 depends_on: add-json-export (t-20260205-001) [todo]
 blocked_by: -
 dir: 2026-02-06-build-nightly-report
-files: task.md | activity.md | plan.md (missing)
+files: task.md
 
 ## Summary
 - Build nightly report generation using exported task snapshots.
@@ -108,18 +115,23 @@ Expected snippet:
 Started: build-nightly-report
 ```
 
-## Update + Activity Demo
+## Update + Task Files Demo
 
 ```bash
 dot-tasks update build-nightly-report --priority p0 --effort l
-dot-tasks log-activity build-nightly-report --note "Escalated after dependency bypass"
+dot-tasks path build-nightly-report
+dot-tasks view document-command-help
 ```
 
-Expected snippet:
+`path` prints the task's absolute folder (it moved to `doing/` when started), so you can open or add files there.
+`view` lists every file in the task folder, `task.md` first:
 
 ```text
 Updated: build-nightly-report
-Logged activity: build-nightly-report
+/…/examples/basic-demo/.tasks/doing/2026-02-06-build-nightly-report
+…
+dir: 2026-02-03-document-command-help
+files: task.md | plan.md
 ```
 
 ## Complete Demo

@@ -24,7 +24,9 @@
 
 `dot-tasks` is a simple CLI for managing project-level tasks in a local `.tasks/` directory, using human- and agent-readable files.
 
-It started as a personal workflow tool: keep task specs in files, let agents work from those specs, and keep progress updates in the repo instead of chat history. It is shared here in case the same approach is useful to others.
+It started as a personal workflow tool: keep task specs in files, let agents work from those specs, and keep progress records in the repo instead of chat history. It is shared here in case the same approach is useful to others.
+
+dot-tasks owns task *state* (id, status, dates, priority, tags, dependencies) and changes it only through commands. Everything else in a task folder is *content*: the `task.md` body and any other files your project keeps there (plans, notes, session records), edited directly like ordinary files. Your project describes its own workflow in `.tasks/README.md`; the tool does not prescribe one.
 
 ![dot-tasks CLI demo](https://raw.githubusercontent.com/Awni00/dot-tasks/main/assets/demo/cli-demo.gif)
 
@@ -38,10 +40,10 @@ Quick start commands:
 dot-tasks init
 # Create a new todo task with an initial summary.
 dot-tasks create rename-variables-for-vibes --summary "Refactor variable names for maximum vibes"
-# Move the task from todo/ to doing/ and create its plan.md.
+# Move the task from todo/ to doing/.
 dot-tasks start rename-variables-for-vibes
-# Append a progress note while work is in progress.
-dot-tasks log-activity rename-variables-for-vibes --note "Replaced cryptic names with vibes-based naming"
+# Print the task folder (to open or add files there).
+dot-tasks path rename-variables-for-vibes
 # Mark the task complete and move it to done/.
 dot-tasks complete rename-variables-for-vibes
 ```
@@ -50,27 +52,27 @@ dot-tasks complete rename-variables-for-vibes
 
 ```text
 .tasks/
+  README.md      # your project's workflow doc (starter written by `init`)
+  config.yaml
   todo/
   doing/
   done/
   trash/
 ```
 
-Each task lives in `.tasks/<status-bucket>/<created-date>-<task_name>/` and contains:
+Each task lives in `.tasks/<status-bucket>/<created-date>-<task_name>/`. The folder moves when the status changes, so refer to tasks by name or id, not by path (`dot-tasks path <task>` resolves one).
 
-- `task.md` (canonical metadata frontmatter + task body)
-- `activity.md` (append-only audit log)
-- `plan.md` (created when the task is started)
+dot-tasks writes only `task.md`: YAML frontmatter with the task's metadata, and a body built from the sections in `settings.task_body_sections` (default: `## Summary`). Any other file in the folder (`plan.md`, `notes.md`, `sessions/…`) belongs to your project, and `dot-tasks view` lists it.
 
 ### Typical workflow:
 
 | Step | What happens | Command(s) | Files touched |
 | --- | --- | --- | --- |
-| Make note of new to-do | Write down the task spec. Often I have an agent draft a spec from a rough note. | `dot-tasks create` | Creates task dir `.tasks/todo/<created-date>-<task_name>/` with `task.md`, `activity.md`|
+| Make note of new to-do | Write down the task spec. Often I have an agent draft a spec from a rough note. | `dot-tasks create` | Creates task dir `.tasks/todo/<created-date>-<task_name>/` with `task.md` |
 | Choose task to work on | Scan what is in `todo`/`doing` and pick the next task to start. | `dot-tasks list` | read-only inspection of `.tasks/` |
-| Start active work | Move the task to active status when implementation begins. | `dot-tasks start` | Move task from `.tasks/todo/` to `.tasks/doing/`; `plan.md` created |
-| Work loop | Log notable progress updates so humans and agents share context. | `dot-tasks log-activity` | `activity.md` |
-| Finish and archive state | Mark done when acceptance criteria are met, preserving full history in files. | `dot-tasks complete` | task directory moves to `.tasks/done/`|
+| Start active work | Move the task to active status when work begins. | `dot-tasks start` | Move task from `.tasks/todo/` to `.tasks/doing/` |
+| Work loop | Edit the task description and the files your workflow keeps (plans, notes, records). | none, edit files directly | `task.md` body, project files in the task folder |
+| Finish and archive state | Mark done when the work is finished, preserving its files. | `dot-tasks complete` | task directory moves to `.tasks/done/`|
 
 ## Installation
 
@@ -113,18 +115,18 @@ uv pip install -e ".[dev]"
 
 | Command | Purpose | Typical usage |
 | --- | --- | --- |
-| `init` | Create `.tasks/` and write/update managed config settings; can also append workflow guidance section AGENTS.md and install the skill via `npx skills`. | `dot-tasks init` |
+| `init` | Create `.tasks/`, write/update managed config settings and a starter `.tasks/README.md` (if missing); can also append the dot-tasks section to AGENTS.md and install the skill via `npx skills`. | `dot-tasks init` |
 | `install-skill` | Install the canonical `dot-tasks` skill via `npx skills`. | `dot-tasks install-skill [--yes]` |
 | `add-agents-snippet` | Add or update the canonical `dot-tasks` section in AGENTS policy markdown. | `dot-tasks add-agents-snippet [--agents-file <path>] [--yes]` |
 | `create` | Add a new task to `todo/`, optionally with a date-only due date. | `dot-tasks create <task_name> [--due-date YYYY-MM-DD] [--spec-readiness unspecified|rough|ready|autonomous]` |
-| `start` | Move a task to `doing/` and create `plan.md`. | `dot-tasks start <task_name>` |
+| `start` | Move a task to `doing/` (checks dependencies; `--force` overrides). | `dot-tasks start <task_name>` |
 | `complete` | Move a task to `done/`. | `dot-tasks complete <task_name>` |
 | `list` | List tasks by status and optional tag filters (rich/plain/JSON depending on context). | `dot-tasks list [todo|doing|done|all] [--tag <tag> ...] [--json]` |
 | `tags` | Show task counts by tag with optional status filter (rich/plain/JSON depending on context). | `dot-tasks tags [todo|doing|done] [--sort count|name] [--json]` |
-| `view` | Show full details for one task, including clickable file links for `task.md`, `activity.md`, `plan.md`, and any extra files. | `dot-tasks view <task_name> [--json]` |
+| `view` | Show full details for one task, including clickable links to `task.md` and every other file in its folder. | `dot-tasks view <task_name> [--json]` |
+| `path` | Print the absolute path of a task's folder. | `dot-tasks path <task_name>` |
 | `graph` | Visualize task dependencies as a DAG in terminal output (`tree` or `layers` modes). | `dot-tasks graph [--mode tree|layers] [--include-done]` |
 | `update` | Update metadata, dependencies, tags, owner, effort, priority, spec readiness, or due date. | `dot-tasks update <task_name> [--due-date YYYY-MM-DD|--clear-due-date] ...` |
-| `log-activity` | Append a manual activity note with optional actor override. | `dot-tasks log-activity <task_name> --note "..." [--actor agent]` |
 | `rename` | Rename a task. | `dot-tasks rename <task_name> <new_task_name>` |
 | `delete` | Move a task to `trash/`, or delete permanently with `--hard`. | `dot-tasks delete <task_name> [--hard]` |
 
@@ -179,13 +181,13 @@ dot-tasks tags todo --sort name
 
 `dot-tasks` is designed so humans and agents can work from the same file-based task state in `.tasks/` instead of relying on chat context.
 
-Typical agent workflow:
+The pieces:
 
-1. Capture or refine a task spec with `dot-tasks create`.
-2. If asked what to work on, check `dot-tasks list` (defaults to `todo|doing`) and propose the top few options with a short rationale.
-3. Move selected work into active state with `dot-tasks start`.
-4. Log meaningful progress with `dot-tasks log-activity --note ...` as work evolves.
-5. Close the loop with `dot-tasks complete` when acceptance criteria are met.
+- **`.tasks/README.md`**: your project's workflow doc. It says when to create tasks, which files a task keeps (e.g. `plan.md`, per-session AI-use records), what to record when wrapping up and before completing. `init` writes a starter skeleton; edit it to fit the project.
+- **AGENTS.md section**: a short trigger that tells agents the project uses dot-tasks and to read `.tasks/README.md` before working on a task.
+- **`dot-tasks` skill**: a compact command and data-model reference.
+
+The CLI itself never prints workflow guidance, so commands stay the same for humans and agents.
 
 You can set up agent integration pieces either during `dot-tasks init` or with standalone commands:
 
@@ -198,6 +200,42 @@ dot-tasks install-skill --yes
 dot-tasks add-agents-snippet
 dot-tasks add-agents-snippet --agents-file TEAM_AGENTS.md --yes
 ```
+
+## Project workflow doc
+
+`.tasks/README.md` is plain Markdown that you own. A research project might say:
+
+```markdown
+## Files in a task folder
+- `task.md` sections: Summary, Done when, Outcome, Human review.
+- `sessions/<date>-<session-id>.md`: one AI-use record per session (model, who did what,
+  outcome, initial and major prompts), written at wrap-up from `.tasks/templates/session.md`.
+
+## Before completing a task
+- Fill Outcome and Human review. Abandoned work is completed with an explanatory Outcome
+  and the `dropped` tag.
+```
+
+The body sections in `task.md` come from `settings.task_body_sections` in `.tasks/config.yaml`:
+
+```yaml
+settings:
+  task_body_sections:
+    - {name: Summary, default: "- TODO"}
+    - {name: Done when, default: "- TODO"}
+    - {name: Outcome, default: "- TODO"}
+    - {name: Human review, default: "- TODO"}
+```
+
+## Migrating from 0.1
+
+0.2.0 removes the workflow the tool used to hardcode:
+
+- `start` no longer creates `plan.md`, and no command writes `activity.md`. Existing `plan.md` and `activity.md` files stay in their task folders as ordinary files.
+- `log-activity` is removed. If you want a log, describe it in `.tasks/README.md` and keep it as a file in the task folder.
+- New: `dot-tasks path <task>`, and `init` writes a starter `.tasks/README.md` if missing.
+
+No config changes are needed. To refresh agent instructions, run `dot-tasks add-agents-snippet` and `dot-tasks install-skill`, then write your workflow in `.tasks/README.md` (run `dot-tasks init` to get the starter).
 
 ## Example Project
 

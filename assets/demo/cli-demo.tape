@@ -30,8 +30,7 @@ Type "dot-tasks"
 Enter
 # Brief pause so picker is visible before navigation.
 Sleep 900ms
-# 'list' is currently the 7th command in the picker, so move down 6 times.
-Down@250ms 6
+# 'list' is the first command in the picker (Inspect section), so select it directly.
 Enter
 # Hold on list output so user can read it.
 Sleep 2200ms
@@ -57,6 +56,9 @@ Sleep 750ms
 Up
 Sleep 250ms
 Enter
+# Accept default "no" for setting a due date.
+Sleep 750ms
+Enter
 # Accept blank owner.
 Sleep 750ms
 Enter
@@ -64,13 +66,6 @@ Enter
 Sleep 750ms
 Backspace 4
 Type "Add README CLI demo media"
-Escape
-Enter
-
-# Provide acceptance criteria (multiline).
-Sleep 750ms
-# Backspace 4
-# Type "Runnable with `vhs` and showcases commands correctly."
 Escape
 Enter
 
@@ -97,5 +92,11 @@ Enter
 # Select default "no" for dependencies.
 Sleep 500ms
 Enter
-# Final pause so completion message remains visible.
+# Pause so the creation message is visible.
+Sleep 2500ms
+
+# Resolve the new task's folder by name.
+Type "dot-tasks path cli-demo-task"
+Enter
+# Final pause so the output remains visible.
 Sleep 3500ms
