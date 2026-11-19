@@ -1,6 +1,10 @@
 settings:
   interactive_enabled: true
   show_banner: true
+  fields:
+  - priority
+  - effort
+  - owner
   list_table:
     columns:
     - name: task_name

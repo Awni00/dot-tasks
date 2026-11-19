@@ -1,27 +1,20 @@
 ---
 task_id: t-20260206-001
 task_name: build-nightly-report
+summary: Build nightly report generation using exported task snapshots.
 status: todo
 date_created: '2026-02-06'
 date_started: null
 date_completed: null
-priority: p0
-effort: l
-spec_readiness: unspecified
 depends_on:
 - t-20260205-001
-blocked_by: []
-owner: alex
 tags:
 - reporting
 - automation
+priority: p0
+effort: l
+owner: alex
 ---
-
-
-
-
-## Summary
-- Build nightly report generation using exported task snapshots.
 
 ## Acceptance Criteria
 - Nightly report job reads JSON export payload.

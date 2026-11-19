@@ -91,3 +91,67 @@ written at session end + body sections Summary / Done when / Outcome / Human rev
   "No such command".
 - Run against this repo's `.tasks/` (`list all`, `view` on an old done task) to confirm legacy tasks
   with activity.md/plan.md still load and display.
+
+## Revision 2 (2026-11-19): task.md structure
+
+Decided after the first implementation pass (commits 72900e3, 4a8c63b). No backward compatibility
+required for 0.2.0. Supersedes decision 4 (body sections) above.
+
+### Decisions
+1. **Fixed fields** (tool logic attached; structural ones change only through commands):
+   `task_id`, `task_name`, `status`, `date_created/started/completed`, `depends_on`, `tags`, plus
+   `summary` (always present, may be empty; a value field).
+2. **Configurable fields** in `settings.fields`: each entry is a built-in name (`priority` choice
+   p0–p3 default p2, `effort` choice s/m/l/xl default m, `due_date` date, `owner` text) or a mapping
+   `{name, type: choice|date|text, values, default}` (new field or override of a built-in).
+   No `fields` key → `[priority, effort, due_date, owner]`. `due_dates.enabled` is removed.
+   Disabled fields: not written for new tasks, not prompted, not listable; existing values kept, hidden.
+3. **`spec_readiness` deleted** from the tool (existing values survive as custom keys).
+4. **Unknown frontmatter keys are kept verbatim**; the retired `blocked_by` key is dropped on rewrite.
+5. **Rule**: structural fields change only through commands; value fields (`summary`, configured
+   fields, custom keys) via `update key=value` or by hand.
+6. **CLI assignments**: `create/update <task> key=value ...`; `key=` clears. Removes `--priority`,
+   `--effort`, `--owner`, `--due-date`, `--clear-due-date`, `--spec-readiness`, `--summary`.
+   Fixed fields keep their flags (`--tag`, `--depends-on`, ...). Unknown field/invalid value → error
+   listing configured fields / allowed values.
+7. **Validation**: invalid stored values of configured fields warn on load (stderr, once per command;
+   names task, field, value, allowed values) and are shown/kept as is; setting an invalid value fails.
+   Fixed-field problems (status, missing deps, cycles) stay errors.
+8. **Generic display**: choice chips coloured by value position (first = strongest); any `date` field
+   in the past is highlighted on open tasks.
+9. **`list` filters** with the same syntax: `list [status] key=value ...` (exact match; AND across keys,
+   OR within a key; `key=` = unset). Any configured field and `summary` can be a list column
+   (`summary` not shown by default; always in JSON).
+10. **`blocked_by` computed, not stored**; shown as `blocks:` in `view` and `"blocks"` in JSON.
+    Graph nodes drop priority/effort (not displayed anyway).
+11. **Body is free-form**: `create` writes the frontmatter and the body from
+    `.tasks/templates/task.md` if it exists, else an empty body. `task_body_sections` is removed
+    (warning if present). The CLI does not edit the body after creation: the interactive `update` form
+    handles frontmatter only, and `_replace_body_sections` is deleted.
+12. **`create` output** always includes the absolute path of `task.md`. Interactive create asks:
+    name, summary (one optional line), configured fields by type, tags, dependencies.
+13. **`init`**: interactive multi-select of built-in fields (priority, effort, due_date preselected;
+    owner off); never clobbers settings it does not prompt for (fixes the bug that reset custom body
+    sections); writes `fields` explicitly.
+
+### Implementation steps
+1. `models.py`: TaskMetadata keeps fixed fields + `summary`; configured values and custom keys in
+   an ordered `fields: dict` (or `extra`), preserving key order on write.
+2. `storage.py`: field-definition parsing (`resolve_fields`), built-in definitions; frontmatter
+   read/write preserving unknown keys; drop `blocked_by`; body template loading; remove
+   `task_body_sections`/`due_dates` resolvers; init upsert preserves unmanaged settings.
+3. `service.py`: assignment parsing/validation, load-time warnings, filters, computed `blocks`,
+   create from template; remove section-merge code and spec_readiness/priority/effort constants.
+4. `cli.py`: positional `key=value` args on create/update/list; remove old flags; create prints path.
+5. `prompt_ui.py` / `selector_ui.py`: type-driven prompts (choice selector, date picker, text);
+   update form frontmatter-only; init field multi-select.
+6. `render.py`: generic field chips/columns, `blocks`, summary column, generic date highlighting.
+7. Tests (each commented): field config parsing (built-ins, overrides, custom, defaults);
+   assignments set/clear/unknown/invalid; disabled-field rejection; load warnings and value
+   preservation; unknown-key round trip and `blocked_by` drop; `blocks` in view/JSON; list filters
+   (AND/OR/unset) and summary column; template body vs empty body; create prints task.md path;
+   init preserves unprompted settings; interactive forms by field type.
+8. Docs: skill (fields, rule, `key=value`), README (task.md format, fields config, template,
+   migration list of removed flags/settings), basic-demo config/README, this repo's config →
+   `.tasks/templates/task.md` with `## Acceptance Criteria`; re-check demo GIF (create form changes →
+   re-record).

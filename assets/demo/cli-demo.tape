@@ -46,6 +46,10 @@ Sleep 700ms
 # Fill create form: task_name prompt.
 Type "cli-demo-task"
 Enter
+# One-line summary (stored in the task.md frontmatter).
+Sleep 750ms
+Type "Add README CLI demo media"
+Enter
 # Change priority from default p2 to p3.
 Sleep 750ms
 Down
@@ -56,23 +60,8 @@ Sleep 750ms
 Up
 Sleep 250ms
 Enter
-# Accept default "no" for setting a due date.
-Sleep 750ms
-Enter
 # Accept blank owner.
 Sleep 750ms
-Enter
-# Provide summary text (multiline).
-Sleep 750ms
-Backspace 4
-Type "Add README CLI demo media"
-Escape
-Enter
-
-# Provide spec_readiness.
-Sleep 750ms
-Down 2
-Sleep 250ms
 Enter
 
 # Provide tags (select + add new, then type them).

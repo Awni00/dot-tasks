@@ -26,7 +26,7 @@
 
 It started as a personal workflow tool: keep task specs in files, let agents work from those specs, and keep progress records in the repo instead of chat history. It is shared here in case the same approach is useful to others.
 
-dot-tasks owns task *state* (id, status, dates, priority, tags, dependencies) and changes it only through commands. Everything else in a task folder is *content*: the `task.md` body and any other files your project keeps there (plans, notes, session records), edited directly like ordinary files. Your project describes its own workflow in `.tasks/README.md`; the tool does not prescribe one.
+dot-tasks keeps each task's metadata in `task.md` frontmatter (status, dates, dependencies, tags, a one-line summary, and whichever fields your project configures) and manages it through commands. The task description and any other files your project keeps in a task folder (plans, notes, session records) are edited directly, like ordinary files. Your project describes its own workflow in `.tasks/README.md`; the tool does not prescribe one.
 
 ![dot-tasks CLI demo](https://raw.githubusercontent.com/Awni00/dot-tasks/main/assets/demo/cli-demo.gif)
 
@@ -38,8 +38,8 @@ Quick start commands:
 ```bash
 # Initialize .tasks/ dir in the current project
 dot-tasks init
-# Create a new todo task with an initial summary.
-dot-tasks create rename-variables-for-vibes --summary "Refactor variable names for maximum vibes"
+# Create a new todo task with a one-line summary and a priority; prints the task.md path.
+dot-tasks create rename-variables-for-vibes summary="Refactor variable names for maximum vibes" priority=p1
 # Move the task from todo/ to doing/.
 dot-tasks start rename-variables-for-vibes
 # Print the task folder (to open or add files there).
@@ -53,7 +53,9 @@ dot-tasks complete rename-variables-for-vibes
 ```text
 .tasks/
   README.md      # your project's workflow doc (starter written by `init`)
-  config.yaml
+  config.yaml    # settings, including the task fields
+  templates/
+    task.md      # optional: the body new tasks start from
   todo/
   doing/
   done/
@@ -62,7 +64,31 @@ dot-tasks complete rename-variables-for-vibes
 
 Each task lives in `.tasks/<status-bucket>/<created-date>-<task_name>/`. The folder moves when the status changes, so refer to tasks by name or id, not by path (`dot-tasks path <task>` resolves one).
 
-dot-tasks writes only `task.md`: YAML frontmatter with the task's metadata, and a body built from the sections in `settings.task_body_sections` (default: `## Summary`). Any other file in the folder (`plan.md`, `notes.md`, `sessions/…`) belongs to your project, and `dot-tasks view` lists it.
+dot-tasks writes only `task.md`. Any other file in the folder (`plan.md`, `notes.md`, `sessions/…`) belongs to your project, and `dot-tasks view` lists it.
+
+### `task.md`
+
+```markdown
+---
+task_id: t-20261119-WF8R
+task_name: prove-lemma-3
+summary: Prove the variance bound in Lemma 3.
+status: todo
+date_created: '2026-11-19'
+date_started: null
+date_completed: null
+depends_on: []
+tags: [theory]
+priority: p1
+kind: theory
+---
+
+## Done when
+- …
+```
+
+- **Frontmatter.** `task_id`, `task_name`, `status`, the dates, `depends_on` and `tags` are structural: they change only through commands (`create`, `start`, `complete`, `update --tag/--depends-on/--status`, `rename`). `summary` and the configured fields (here `priority` and a project-defined `kind`) are values: set them with `key=value` on `create`/`update`, or edit them by hand. Keys you add by hand are kept as written.
+- **Body.** Free-form Markdown, written in your editor. `create` starts it from `.tasks/templates/task.md` if that file exists, otherwise it is empty. The CLI never edits the body after creation.
 
 ### Typical workflow:
 
@@ -118,15 +144,15 @@ uv pip install -e ".[dev]"
 | `init` | Create `.tasks/`, write/update managed config settings and a starter `.tasks/README.md` (if missing); can also append the dot-tasks section to AGENTS.md and install the skill via `npx skills`. | `dot-tasks init` |
 | `install-skill` | Install the canonical `dot-tasks` skill via `npx skills`. | `dot-tasks install-skill [--yes]` |
 | `add-agents-snippet` | Add or update the canonical `dot-tasks` section in AGENTS policy markdown. | `dot-tasks add-agents-snippet [--agents-file <path>] [--yes]` |
-| `create` | Add a new task to `todo/`, optionally with a date-only due date. | `dot-tasks create <task_name> [--due-date YYYY-MM-DD] [--spec-readiness unspecified|rough|ready|autonomous]` |
+| `create` | Add a new task to `todo/` and print the path of its `task.md`. | `dot-tasks create <task_name> [summary="..."] [field=value ...] [--tag <tag>] [--depends-on <task>]` |
 | `start` | Move a task to `doing/` (checks dependencies; `--force` overrides). | `dot-tasks start <task_name>` |
 | `complete` | Move a task to `done/`. | `dot-tasks complete <task_name>` |
-| `list` | List tasks by status and optional tag filters (rich/plain/JSON depending on context). | `dot-tasks list [todo|doing|done|all] [--tag <tag> ...] [--json]` |
+| `list` | List tasks by status, field and tag filters (rich/plain/JSON depending on context). | `dot-tasks list [todo|doing|done|all] [field=value ...] [--tag <tag> ...] [--json]` |
 | `tags` | Show task counts by tag with optional status filter (rich/plain/JSON depending on context). | `dot-tasks tags [todo|doing|done] [--sort count|name] [--json]` |
 | `view` | Show full details for one task, including clickable links to `task.md` and every other file in its folder. | `dot-tasks view <task_name> [--json]` |
 | `path` | Print the absolute path of a task's folder. | `dot-tasks path <task_name>` |
 | `graph` | Visualize task dependencies as a DAG in terminal output (`tree` or `layers` modes). | `dot-tasks graph [--mode tree|layers] [--include-done]` |
-| `update` | Update metadata, dependencies, tags, owner, effort, priority, spec readiness, or due date. | `dot-tasks update <task_name> [--due-date YYYY-MM-DD|--clear-due-date] ...` |
+| `update` | Update the summary, fields, tags, dependencies or status (interactive form when no changes are given). | `dot-tasks update <task_name> [field=value ...] [field= ...] [--tag <tag>] [--depends-on <task>] [--status ...]` |
 | `rename` | Rename a task. | `dot-tasks rename <task_name> <new_task_name>` |
 | `delete` | Move a task to `trash/`, or delete permanently with `--hard`. | `dot-tasks delete <task_name> [--hard]` |
 
@@ -134,38 +160,37 @@ Interactive `create` and interactive `update` use a single tag selector flow wit
 
 Status filter supports `todo|doing` style multi-select and `all`. Default is `todo|doing`.
 
-### Optional due dates
+### Task fields
 
-Due dates are stored in task frontmatter as an optional ISO `due_date: YYYY-MM-DD`.
-They contain no time or timezone. Explicit `create --due-date`, `update --due-date`,
-and `update --clear-due-date` options remain available for scripts regardless of
-the interactive feature setting.
+Fields are set and filtered with `key=value`; `key=` clears a field (or, in `list`, matches tasks where it is unset):
 
-Due dates are enabled by default. Their interactive prompts and human-readable
-output can be disabled:
+```bash
+dot-tasks create prove-lemma-3 summary="Prove the variance bound in Lemma 3." priority=p1 kind=theory
+dot-tasks update prove-lemma-3 due_date=2026-12-01
+dot-tasks update prove-lemma-3 due_date=
+dot-tasks list all kind=theory kind=writing     # same key twice: either value
+dot-tasks list priority=p0 due_date=            # different keys: all must match
+```
+
+A project chooses its fields in `.tasks/config.yaml`. An entry is either the name of a built-in field or a definition with a `type` (`choice`, `date` or `text`):
 
 ```yaml
 settings:
-  due_dates:
-    enabled: true
-  list_table:
-    columns:
-      - name: task_name
-        width: 32
-      - name: due_date
-        width: 10
+  fields:
+    - priority                 # built-in: choice p0, p1, p2, p3 (default p2)
+    - due_date                 # built-in: date
+    - name: kind               # project-defined
+      type: choice
+      values: [theory, experiment, writing, literature]
+    - name: effort             # built-in, overridden
+      values: [hours, days, weeks]
+      default: days
 ```
 
-When due dates are enabled, `init` offers `due_date` in the list-column
-selector and selects it by default; users may unselect it. When due dates are
-disabled, the column is omitted from the selector and suppressed from list
-output. In Rich terminal output, dates before today render in red and dates due
-today render in orange for `todo` and `doing` tasks. Completed tasks are not
-highlighted.
-
-The interactive date picker starts at today after choosing to set a date.
-Use left/right to select year, month, or day; up/down to adjust it; type digits
-to replace a segment; and press Enter to accept.
+- **Built-ins:** `priority` (choice p0–p3, default p2, colour-ranked), `effort` (choice s/m/l/xl, default m), `due_date` (date), `owner` (text). A config without `fields` uses all four; a new `init` selects `priority`, `effort` and `due_date`.
+- **Types:** `choice` values come from `values`; `ranked: true` colours the first values (as for `priority`). `date` values are `YYYY-MM-DD`; past dates on open tasks are highlighted red, today's orange, and the interactive date picker uses left/right for year/month/day and up/down to change them. `text` is free text.
+- **Validation:** setting an unknown field or an invalid value fails with the allowed choices. A stored value that no longer fits (for example after you rename a choice) is reported as a warning on each command and left in place.
+- **List columns:** any configured field, `summary`, `task_name`, `task_id`, `status`, `deps`, `created` and `completed` can be a column in `settings.list_table.columns`.
 
 Tag examples:
 
@@ -207,7 +232,7 @@ dot-tasks add-agents-snippet --agents-file TEAM_AGENTS.md --yes
 
 ```markdown
 ## Files in a task folder
-- `task.md` sections: Summary, Done when, Outcome, Human review.
+- `task.md` body: starts from `.tasks/templates/task.md` (Done when, Outcome, Human review).
 - `sessions/<date>-<session-id>.md`: one AI-use record per session (model, who did what,
   outcome, initial and major prompts), written at wrap-up from `.tasks/templates/session.md`.
 
@@ -216,26 +241,28 @@ dot-tasks add-agents-snippet --agents-file TEAM_AGENTS.md --yes
   and the `dropped` tag.
 ```
 
-The body sections in `task.md` come from `settings.task_body_sections` in `.tasks/config.yaml`:
+Its body template, `.tasks/templates/task.md`, puts reminders where the agent writes:
 
-```yaml
-settings:
-  task_body_sections:
-    - {name: Summary, default: "- TODO"}
-    - {name: Done when, default: "- TODO"}
-    - {name: Outcome, default: "- TODO"}
-    - {name: Human review, default: "- TODO"}
+```markdown
+## Done when
+
+## Outcome
+<!-- Filled at wrap-up. Abandoned work: explain why and tag `dropped`. -->
+
+## Human review
 ```
 
 ## Migrating from 0.1
 
-0.2.0 removes the workflow the tool used to hardcode:
+0.2.0 removes the workflow the tool used to hardcode and makes the task format configurable. It is not backward compatible on the command line:
 
-- `start` no longer creates `plan.md`, and no command writes `activity.md`. Existing `plan.md` and `activity.md` files stay in their task folders as ordinary files.
-- `log-activity` is removed. If you want a log, describe it in `.tasks/README.md` and keep it as a file in the task folder.
-- New: `dot-tasks path <task>`, and `init` writes a starter `.tasks/README.md` if missing.
+- **Files:** `start` no longer creates `plan.md`, and no command writes `activity.md`. Existing `plan.md` and `activity.md` files stay in their task folders as ordinary files.
+- **Commands:** `log-activity` is removed. `--priority`, `--effort`, `--owner`, `--due-date`, `--clear-due-date`, `--summary` and `--spec-readiness` are replaced by `key=value` arguments (`priority=p1`, `due_date=`, `summary="..."`).
+- **Fields:** `spec_readiness` is no longer a field (existing values stay in the files as custom keys). `blocked_by` is no longer stored; `view` shows the same information as `blocks`. The summary is a frontmatter field; old tasks keep their `## Summary` body section.
+- **Settings:** `settings.task_body_sections` and `settings.due_dates` are replaced by `.tasks/templates/task.md` and `settings.fields`. Run `dot-tasks init` once: it moves your body sections into the template (except Summary) and removes the retired settings.
+- **New:** `dot-tasks path <task>`, configurable typed fields, `list` field filters, and a starter `.tasks/README.md` from `init`.
 
-No config changes are needed. To refresh agent instructions, run `dot-tasks add-agents-snippet` and `dot-tasks install-skill`, then write your workflow in `.tasks/README.md` (run `dot-tasks init` to get the starter).
+To refresh agent instructions, run `dot-tasks add-agents-snippet` and `dot-tasks install-skill`, then write your workflow in `.tasks/README.md`.
 
 ## Example Project
 

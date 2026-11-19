@@ -121,10 +121,12 @@ CLAUDE.md and the dot-tasks skill, so keep it short.
 - TODO: e.g. work spanning sessions or needing a record.
 
 ## Files in a task folder
-- `task.md`: metadata (changed only through dot-tasks commands) and the task description
-  (edit directly).
+- `task.md`: frontmatter (status, dates, dependencies and tags change only through dot-tasks
+  commands; `summary` and project fields via `dot-tasks update <task> key=value` or by hand)
+  and the task description in the body (edit directly). New tasks start from
+  `.tasks/templates/task.md` if it exists.
 - TODO: other files tasks keep, e.g. `plan.md`, `sessions/<date>-<id>.md`.
-- Templates for task files, if any: `.tasks/templates/`.
+- Templates for other task files, if any: `.tasks/templates/`.
 
 ## Wrapping up a session
 - TODO: what to record before ending a work session.
