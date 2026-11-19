@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import MISSING, dataclass, fields
 import datetime as dt
 from pathlib import Path
 import secrets
@@ -13,78 +12,66 @@ import yaml
 
 from .models import (
     DIR_TO_STATUS,
+    FIELD_NAME_RE,
+    FIELD_TYPES,
+    FIXED_KEYS,
+    RESERVED_FIELD_NAMES,
+    RETIRED_KEYS,
     STATUS_TO_DIR,
+    FieldDef,
     Task,
     TaskConflictError,
     TaskMetadata,
 )
 
 
-TASK_META_KEYS = [f.name for f in fields(TaskMetadata)]
-TASK_DATE_KEYS = ("date_created", "date_started", "date_completed", "due_date")
 DEFAULT_INTERACTIVE_ENABLED = True
 DEFAULT_SHOW_BANNER = True
-DEFAULT_DUE_DATES_ENABLED = True
 SUPPORTED_SETTINGS_KEYS = {
     "interactive_enabled",
     "show_banner",
-    "due_dates",
+    "fields",
     "list_table",
-    "task_body_sections",
 }
-DEFAULT_TASK_BODY_SECTIONS: list[dict[str, str]] = [
-    {"name": "Summary", "default": "- TODO"},
-]
-LIST_TABLE_COLUMNS_SUPPORTED = (
+# Settings removed in 0.2.0, with what replaces them.
+RETIRED_SETTINGS = {
+    "due_dates": "list `due_date` in settings.fields to enable due dates",
+    "task_body_sections": "put a body template in .tasks/templates/task.md",
+}
+
+# Built-in field definitions, referenced by name in settings.fields.
+BUILTIN_FIELDS: dict[str, FieldDef] = {
+    "priority": FieldDef("priority", "choice", ("p0", "p1", "p2", "p3"), "p2", ranked=True),
+    "effort": FieldDef("effort", "choice", ("s", "m", "l", "xl"), "m"),
+    "due_date": FieldDef("due_date", "date"),
+    "owner": FieldDef("owner", "text"),
+}
+# Fields used when a config has no settings.fields key.
+DEFAULT_FIELD_NAMES = ("priority", "effort", "due_date", "owner")
+# Built-in fields preselected by `init` for a new project.
+INIT_DEFAULT_FIELD_NAMES = ("priority", "effort", "due_date")
+
+# List columns that are always available; configured fields are available too.
+FIXED_LIST_COLUMNS = (
     "task_name",
     "task_id",
     "status",
-    "priority",
-    "effort",
-    "spec_readiness",
+    "summary",
     "deps",
-    "due_date",
     "created",
     "completed",
 )
-LIST_TABLE_COLUMN_DEFAULT_WIDTHS: dict[str, int] = {
+FIXED_LIST_COLUMN_WIDTHS: dict[str, int] = {
     "task_name": 32,
     "task_id": 15,
     "status": 10,
-    "priority": 8,
-    "effort": 6,
-    "spec_readiness": 14,
+    "summary": 48,
     "deps": 12,
-    "due_date": 10,
     "created": 10,
     "completed": 12,
 }
 TASK_ID_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ"
 TASK_ID_SUFFIX_LEN = 4
-DEFAULT_LIST_TABLE_COLUMNS: tuple[tuple[str, int], ...] = (
-    ("task_name", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["task_name"]),
-    ("priority", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["priority"]),
-    ("effort", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["effort"]),
-    ("due_date", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["due_date"]),
-    ("created", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["created"]),
-    ("deps", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["deps"]),
-)
-DEFAULT_DONE_LIST_TABLE_COLUMNS: tuple[tuple[str, int], ...] = (
-    ("task_name", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["task_name"]),
-    ("priority", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["priority"]),
-    ("effort", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["effort"]),
-    ("due_date", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["due_date"]),
-    ("created", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["created"]),
-    ("completed", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["completed"]),
-)
-
-
-@dataclass(frozen=True)
-class DueDateSettings:
-    enabled: bool = DEFAULT_DUE_DATES_ENABLED
-    # True when config.yaml sets a valid `settings.due_dates.enabled` (False for configs
-    # written before due dates existed, or when the value is invalid and defaulted).
-    configured: bool = False
 
 
 def find_repo_root(start: Path) -> Path | None:
@@ -171,108 +158,92 @@ def config_path(tasks_root: Path) -> Path:
     return tasks_root / "config.yaml"
 
 
-def _default_list_table_columns(
-    columns: list[dict[str, int | str]] | None = None,
-) -> list[dict[str, int | str]]:
-    if columns is not None:
-        return [{"name": str(column["name"]), "width": int(column["width"])} for column in columns]
-    return [{"name": name, "width": width} for name, width in DEFAULT_LIST_TABLE_COLUMNS]
+def field_column_width(field_def: FieldDef) -> int:
+    if field_def.type == "date":
+        return 10
+    if field_def.type == "choice":
+        return max([len(field_def.name), *(len(value) for value in field_def.values)])
+    return 16
 
 
-def default_list_table_columns(
-    columns: list[dict[str, int | str]] | None = None,
-) -> list[dict[str, int | str]]:
-    return _default_list_table_columns(columns)
+def column_default_widths(field_defs: list[FieldDef]) -> dict[str, int]:
+    widths = dict(FIXED_LIST_COLUMN_WIDTHS)
+    for field_def in field_defs:
+        widths[field_def.name] = field_column_width(field_def)
+    return widths
 
 
-def default_done_list_table_columns() -> list[dict[str, int | str]]:
-    return [{"name": name, "width": width} for name, width in DEFAULT_DONE_LIST_TABLE_COLUMNS]
+def supported_list_columns(field_defs: list[FieldDef]) -> list[str]:
+    names = list(FIXED_LIST_COLUMNS)
+    names.extend(field_def.name for field_def in field_defs if field_def.name not in names)
+    return names
+
+
+def default_list_column_names(field_defs: list[FieldDef]) -> list[str]:
+    """task_name, the configured choice/date fields, created, deps."""
+    names = ["task_name"]
+    names.extend(field_def.name for field_def in field_defs if field_def.type != "text")
+    names.extend(["created", "deps"])
+    return names
+
+
+def default_list_table_columns(field_defs: list[FieldDef]) -> list[dict[str, int | str]]:
+    widths = column_default_widths(field_defs)
+    return [{"name": name, "width": widths[name]} for name in default_list_column_names(field_defs)]
 
 
 def list_column_names(columns: list[dict[str, int | str]]) -> list[str]:
     return [str(column["name"]) for column in columns]
 
 
-def default_list_column_names() -> list[str]:
-    return [name for name, _ in DEFAULT_LIST_TABLE_COLUMNS]
-
-
-def apply_due_date_list_setting(
-    columns: list[dict[str, int | str]],
-    *,
-    enabled: bool,
-) -> list[dict[str, int | str]]:
-    if enabled:
-        return columns
-    return [column for column in columns if str(column["name"]) != "due_date"]
-
-
 def apply_done_list_defaults(
     columns: list[dict[str, int | str]],
+    field_defs: list[FieldDef],
 ) -> list[dict[str, int | str]]:
+    """For the default column set, show `completed` instead of `deps` for done tasks."""
     names = list_column_names(columns)
-    if "completed" in names:
+    if "completed" in names or names != default_list_column_names(field_defs):
         return columns
-    default_names = default_list_column_names()
-    default_names_without_due_date = [
-        name for name in default_names if name != "due_date"
+    width = FIXED_LIST_COLUMN_WIDTHS["completed"]
+    return [
+        {"name": "completed", "width": width} if str(column["name"]) == "deps" else column
+        for column in columns
     ]
-    if tuple(names) not in {tuple(default_names), tuple(default_names_without_due_date)}:
-        return columns
-
-    updated: list[dict[str, int | str]] = []
-    for column in columns:
-        name = str(column["name"])
-        if name == "deps":
-            updated.append(
-                {
-                    "name": "completed",
-                    "width": int(column.get("width", LIST_TABLE_COLUMN_DEFAULT_WIDTHS["completed"])),
-                }
-            )
-        else:
-            updated.append(column)
-    return updated
-
-
-def default_config(
-    interactive_enabled: bool = DEFAULT_INTERACTIVE_ENABLED,
-    list_columns: list[dict[str, int | str]] | None = None,
-    show_banner: bool = DEFAULT_SHOW_BANNER,
-    due_dates_enabled: bool = DEFAULT_DUE_DATES_ENABLED,
-    task_body_sections: list[dict[str, str]] | None = None,
-) -> dict[str, Any]:
-    return {
-        "settings": build_managed_settings(
-            interactive_enabled,
-            list_columns,
-            show_banner=show_banner,
-            due_dates_enabled=due_dates_enabled,
-            task_body_sections=task_body_sections,
-        )
-    }
 
 
 def build_managed_settings(
     interactive_enabled: bool = DEFAULT_INTERACTIVE_ENABLED,
     list_columns: list[dict[str, int | str]] | None = None,
     show_banner: bool = DEFAULT_SHOW_BANNER,
-    due_dates_enabled: bool = DEFAULT_DUE_DATES_ENABLED,
-    task_body_sections: list[dict[str, str]] | None = None,
+    fields: list[Any] | None = None,
 ) -> dict[str, Any]:
+    """Settings that `init` manages. *fields* holds settings.fields entries as written."""
+    field_entries = list(fields) if fields is not None else list(INIT_DEFAULT_FIELD_NAMES)
+    field_defs = parse_field_entries(field_entries)
+    columns = list_columns if list_columns is not None else default_list_table_columns(field_defs)
     return {
         "interactive_enabled": interactive_enabled,
         "show_banner": show_banner,
-        "due_dates": {
-            "enabled": due_dates_enabled,
-        },
+        "fields": field_entries,
         "list_table": {
-            "columns": apply_due_date_list_setting(
-                _default_list_table_columns(list_columns),
-                enabled=due_dates_enabled,
-            ),
+            "columns": [{"name": str(column["name"]), "width": int(column["width"])} for column in columns],
         },
-        "task_body_sections": list(task_body_sections) if task_body_sections is not None else list(DEFAULT_TASK_BODY_SECTIONS),
+    }
+
+
+def default_config(
+    interactive_enabled: bool = DEFAULT_INTERACTIVE_ENABLED,
+    list_columns: list[dict[str, int | str]] | None = None,
+    show_banner: bool = DEFAULT_SHOW_BANNER,
+    fields: list[Any] | None = None,
+) -> dict[str, Any]:
+    return {
+        "settings": build_managed_settings(
+            interactive_enabled,
+            list_columns,
+            show_banner=show_banner,
+            fields=fields,
+        )
     }
 
 
@@ -281,21 +252,27 @@ def merge_managed_config(
     interactive_enabled: bool = DEFAULT_INTERACTIVE_ENABLED,
     list_columns: list[dict[str, int | str]] | None = None,
     show_banner: bool = DEFAULT_SHOW_BANNER,
-    due_dates_enabled: bool = DEFAULT_DUE_DATES_ENABLED,
-    task_body_sections: list[dict[str, str]] | None = None,
+    fields: list[Any] | None = None,
 ) -> dict[str, Any]:
+    """Overwrite only the managed settings; keep every other key; drop retired settings.
+
+    When *fields* is None the existing settings.fields (if any) is kept as written.
+    """
     merged = dict(existing_config) if isinstance(existing_config, dict) else {}
     existing_settings = merged.get("settings", {})
     settings = dict(existing_settings) if isinstance(existing_settings, dict) else {}
+    if fields is None and isinstance(settings.get("fields"), list):
+        fields = list(settings["fields"])
     settings.update(
         build_managed_settings(
             interactive_enabled,
             list_columns,
             show_banner=show_banner,
-            due_dates_enabled=due_dates_enabled,
-            task_body_sections=task_body_sections,
+            fields=fields,
         )
     )
+    for key in RETIRED_SETTINGS:
+        settings.pop(key, None)
     merged["settings"] = settings
     return merged
 
@@ -306,6 +283,7 @@ def write_config(tasks_root: Path, payload: dict[str, Any]) -> None:
         payload,
         sort_keys=False,
         default_flow_style=False,
+        allow_unicode=True,
     )
     path.write_text(dumped, encoding="utf-8")
 
@@ -315,8 +293,7 @@ def upsert_init_config(
     interactive_enabled: bool = DEFAULT_INTERACTIVE_ENABLED,
     list_columns: list[dict[str, int | str]] | None = None,
     show_banner: bool = DEFAULT_SHOW_BANNER,
-    due_dates_enabled: bool = DEFAULT_DUE_DATES_ENABLED,
-    task_body_sections: list[dict[str, str]] | None = None,
+    fields: list[Any] | None = None,
 ) -> Literal["created", "updated"]:
     path = config_path(tasks_root)
     exists = path.exists()
@@ -326,33 +303,10 @@ def upsert_init_config(
         interactive_enabled=interactive_enabled,
         list_columns=list_columns,
         show_banner=show_banner,
-        due_dates_enabled=due_dates_enabled,
-        task_body_sections=task_body_sections,
+        fields=fields,
     )
     write_config(tasks_root, merged)
     return "updated" if exists else "created"
-
-
-def write_default_config_if_missing(
-    tasks_root: Path,
-    interactive_enabled: bool = DEFAULT_INTERACTIVE_ENABLED,
-    list_columns: list[dict[str, int | str]] | None = None,
-    show_banner: bool = DEFAULT_SHOW_BANNER,
-    due_dates_enabled: bool = DEFAULT_DUE_DATES_ENABLED,
-) -> bool:
-    path = config_path(tasks_root)
-    if path.exists():
-        return False
-    write_config(
-        tasks_root,
-        default_config(
-            interactive_enabled,
-            list_columns=list_columns,
-            show_banner=show_banner,
-            due_dates_enabled=due_dates_enabled,
-        ),
-    )
-    return True
 
 
 def read_config(tasks_root: Path, warn: Callable[[str], None] | None = None) -> dict[str, Any]:
@@ -392,7 +346,14 @@ def _read_settings(
         return None
 
     for key in settings.keys():
-        if key not in SUPPORTED_SETTINGS_KEYS and warn is not None:
+        if warn is None or key in SUPPORTED_SETTINGS_KEYS:
+            continue
+        if key in RETIRED_SETTINGS:
+            warn(
+                f"settings.{key} in {config_path(tasks_root)} is no longer supported: "
+                f"{RETIRED_SETTINGS[key]}. Ignoring."
+            )
+        else:
             warn(f"Unsupported settings key '{key}' in {config_path(tasks_root)}. Ignoring.")
     return settings
 
@@ -439,51 +400,122 @@ def resolve_show_banner(
     return show_banner
 
 
-def resolve_due_date_settings(
+def _parse_field_entry(
+    raw: Any,
+    index: int,
+    warn: Callable[[str], None],
+) -> FieldDef | None:
+    where = f"settings.fields[{index}]"
+    if isinstance(raw, str):
+        builtin = BUILTIN_FIELDS.get(raw)
+        if builtin is None:
+            known = ", ".join(BUILTIN_FIELDS)
+            warn(f"Unknown built-in field '{raw}' at {where} (built-ins: {known}). Ignoring.")
+        return builtin
+    if not isinstance(raw, dict):
+        warn(f"Invalid entry at {where}: expected a field name or a mapping. Ignoring.")
+        return None
+
+    name = raw.get("name")
+    if not isinstance(name, str) or not FIELD_NAME_RE.fullmatch(name):
+        warn(f"Missing or invalid 'name' at {where}. Ignoring.")
+        return None
+    unknown_keys = set(raw) - {"name", "type", "values", "default", "ranked"}
+    for key in sorted(unknown_keys):
+        warn(f"Unsupported key '{key}' for field '{name}' at {where}. Ignoring.")
+
+    base = BUILTIN_FIELDS.get(name)
+    field_type = raw.get("type", base.type if base else None)
+    if field_type not in FIELD_TYPES:
+        warn(f"Field '{name}' at {where} needs a type: one of {', '.join(FIELD_TYPES)}. Ignoring.")
+        return None
+
+    values: tuple[str, ...] = ()
+    ranked = False
+    if field_type == "choice":
+        raw_values = raw.get("values", list(base.values) if base and base.type == "choice" else None)
+        if not isinstance(raw_values, list) or not raw_values:
+            warn(f"Choice field '{name}' at {where} needs a non-empty 'values' list. Ignoring.")
+            return None
+        values = tuple(str(value) for value in raw_values)
+        ranked = bool(raw.get("ranked", base.ranked if base and base.type == "choice" else False))
+    elif "values" in raw:
+        warn(f"'values' only applies to choice fields; ignored for '{name}' at {where}.")
+
+    default = raw.get("default", base.default if base and base.type == field_type else None)
+    if default is not None:
+        default = str(default)
+        if field_type == "choice" and default not in values:
+            warn(f"Default '{default}' of field '{name}' is not one of its values. Ignoring default.")
+            default = None
+        elif field_type == "date":
+            try:
+                default = normalize_date(default)
+            except ValueError:
+                warn(f"Default of date field '{name}' must be YYYY-MM-DD. Ignoring default.")
+                default = None
+    return FieldDef(name, field_type, values, default, ranked)
+
+
+def parse_field_entries(
+    entries: list[Any],
+    warn: Callable[[str], None] | None = None,
+) -> list[FieldDef]:
+    """Parse settings.fields entries (built-in names or mappings) into field definitions."""
+    emit = warn or (lambda message: None)
+    parsed: list[FieldDef] = []
+    seen: set[str] = set()
+    for index, raw in enumerate(entries):
+        field_def = _parse_field_entry(raw, index, emit)
+        if field_def is None:
+            continue
+        if field_def.name in RESERVED_FIELD_NAMES:
+            emit(f"Field name '{field_def.name}' is reserved by dot-tasks. Ignoring.")
+            continue
+        if field_def.name in seen:
+            emit(f"Duplicate field '{field_def.name}' in settings.fields. Keeping the first.")
+            continue
+        seen.add(field_def.name)
+        parsed.append(field_def)
+    return parsed
+
+
+def resolve_fields(
     tasks_root: Path,
     warn: Callable[[str], None] | None = None,
-) -> DueDateSettings:
+) -> list[FieldDef]:
+    """Configured fields; without settings.fields, the built-in default set."""
+    defaults = [BUILTIN_FIELDS[name] for name in DEFAULT_FIELD_NAMES]
     settings = _read_settings(tasks_root, warn)
-    if settings is None:
-        return DueDateSettings()
-
-    due_dates = settings.get("due_dates")
-    if due_dates is None:
-        return DueDateSettings()
-    if not isinstance(due_dates, dict):
+    if settings is None or "fields" not in settings:
+        return defaults
+    entries = settings["fields"]
+    if entries is None:
+        return []
+    if not isinstance(entries, list):
         if warn is not None:
-            warn(
-                f"Invalid settings.due_dates section in {config_path(tasks_root)}. "
-                "Using defaults."
-            )
-        return DueDateSettings()
+            warn(f"Invalid settings.fields in {config_path(tasks_root)}: expected a list. Using defaults.")
+        return defaults
+    return parse_field_entries(entries, warn)
 
-    supported_due_date_keys = {"enabled"}
-    for key in due_dates:
-        if key not in supported_due_date_keys and warn is not None:
-            warn(
-                f"Unsupported settings.due_dates key '{key}' in "
-                f"{config_path(tasks_root)}. Ignoring."
-            )
 
-    if "enabled" not in due_dates:
-        return DueDateSettings()
-    enabled = due_dates["enabled"]
-    if not isinstance(enabled, bool):
-        if warn is not None:
-            warn(
-                f"Invalid settings.due_dates.enabled in {config_path(tasks_root)}. "
-                f"Using default '{DEFAULT_DUE_DATES_ENABLED}'."
-            )
-        return DueDateSettings()
-    return DueDateSettings(enabled=enabled, configured=True)
+def normalize_date(value: str) -> str:
+    """Return *value* as an ISO date (YYYY-MM-DD); raise ValueError otherwise."""
+    cleaned = value.strip()
+    if len(cleaned) != 10:
+        raise ValueError(value)
+    return dt.date.fromisoformat(cleaned).isoformat()
 
 
 def resolve_list_table_columns(
     tasks_root: Path,
     warn: Callable[[str], None] | None = None,
+    field_defs: list[FieldDef] | None = None,
 ) -> list[dict[str, int | str]]:
-    defaults = _default_list_table_columns()
+    if field_defs is None:
+        field_defs = resolve_fields(tasks_root, warn)
+    supported = supported_list_columns(field_defs)
+    defaults = default_list_table_columns(field_defs)
     settings = _read_settings(tasks_root, warn)
     if settings is None:
         return defaults
@@ -530,11 +562,11 @@ def resolve_list_table_columns(
 
         name = raw_column.get("name")
         width = raw_column.get("width")
-        if name not in LIST_TABLE_COLUMNS_SUPPORTED:
+        if name not in supported:
             if warn is not None:
                 warn(
-                    f"Unsupported list column '{name}' in {config_path(tasks_root)}. "
-                    "Ignoring."
+                    f"List column '{name}' in {config_path(tasks_root)} is neither a built-in "
+                    "column nor a configured field. Ignoring."
                 )
             continue
         if name in seen:
@@ -566,57 +598,60 @@ def resolve_list_table_columns(
     return defaults
 
 
-def resolve_task_body_sections(
-    tasks_root: Path,
-    warn: Callable[[str], None] | None = None,
-) -> list[dict[str, str]]:
-    defaults = list(DEFAULT_TASK_BODY_SECTIONS)
-    settings = _read_settings(tasks_root, warn)
-    if settings is None:
-        return defaults
+def task_template_path(tasks_root: Path) -> Path:
+    return tasks_root / "templates" / "task.md"
 
+
+def migrate_retired_settings(tasks_root: Path) -> list[str]:
+    """Migrate 0.1 settings in config.yaml; return messages describing what changed.
+
+    - settings.task_body_sections becomes .tasks/templates/task.md (unless a template exists);
+      the Summary section is skipped because the summary now lives in the frontmatter.
+    - settings.due_dates is dropped (due dates are enabled by listing `due_date` in fields).
+    """
+    config = read_config(tasks_root)
+    settings = config.get("settings")
+    if not isinstance(settings, dict) or not any(key in settings for key in RETIRED_SETTINGS):
+        return []
+    messages: list[str] = []
     sections = settings.get("task_body_sections")
-    if sections is None:
-        return defaults
-    if not isinstance(sections, list):
-        if warn is not None:
-            warn(
-                f"Invalid settings.task_body_sections in {config_path(tasks_root)}. "
-                "Using defaults."
-            )
-        return defaults
+    template = task_template_path(tasks_root)
+    if isinstance(sections, list) and not template.exists():
+        parts = []
+        for section in sections:
+            if not isinstance(section, dict) or not isinstance(section.get("name"), str):
+                continue
+            if section["name"].strip().lower() == "summary":
+                continue
+            default = str(section.get("default", "")).strip()
+            parts.append(f"## {section['name']}\n{default}\n" if default else f"## {section['name']}\n")
+        if parts:
+            template.parent.mkdir(parents=True, exist_ok=True)
+            template.write_text("\n".join(parts), encoding="utf-8")
+            messages.append(f"Moved settings.task_body_sections to body template: {template}")
+    due_dates = settings.get("due_dates")
+    if (
+        isinstance(due_dates, dict)
+        and due_dates.get("enabled") is False
+        and isinstance(settings.get("fields"), list) is False
+    ):
+        settings["fields"] = [name for name in DEFAULT_FIELD_NAMES if name != "due_date"]
+        messages.append("Replaced settings.due_dates (disabled) with settings.fields without due_date")
+    for key in RETIRED_SETTINGS:
+        if key in settings:
+            settings.pop(key)
+            messages.append(f"Removed retired setting settings.{key}")
+    config["settings"] = settings
+    write_config(tasks_root, config)
+    return messages
 
-    validated: list[dict[str, str]] = []
-    for index, raw_section in enumerate(sections, start=1):
-        if not isinstance(raw_section, dict):
-            if warn is not None:
-                warn(
-                    f"Invalid section entry at settings.task_body_sections[{index}] in "
-                    f"{config_path(tasks_root)}. Ignoring."
-                )
-            continue
 
-        name = raw_section.get("name")
-        if not name or not isinstance(name, str):
-            if warn is not None:
-                warn(
-                    f"Missing or invalid 'name' at settings.task_body_sections[{index}] in "
-                    f"{config_path(tasks_root)}. Ignoring."
-                )
-            continue
-
-        default_content = str(raw_section.get("default", "- TODO"))
-        validated.append({"name": name, "default": default_content})
-
-    if validated:
-        return validated
-
-    if warn is not None:
-        warn(
-            f"No valid settings.task_body_sections in {config_path(tasks_root)}. "
-            "Using defaults."
-        )
-    return defaults
+def read_task_template(tasks_root: Path) -> str:
+    """Body for new tasks: .tasks/templates/task.md if it exists, else empty."""
+    path = task_template_path(tasks_root)
+    if not path.is_file():
+        return ""
+    return path.read_text(encoding="utf-8")
 
 
 def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
@@ -635,49 +670,64 @@ def split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
 
 
 def render_frontmatter(data: dict[str, Any], body: str) -> str:
-    ordered: dict[str, Any] = {}
-    for key in TASK_META_KEYS:
-        if key in data:
-            ordered[key] = data[key]
-    dumped = yaml.safe_dump(ordered, sort_keys=False, default_flow_style=False).strip()
-    body = _normalize_body(body) + "\n"
-    return f"---\n{dumped}\n---\n\n{body}"
+    dumped = yaml.safe_dump(
+        data,
+        sort_keys=False,
+        default_flow_style=False,
+        allow_unicode=True,
+        width=1_000_000,  # never fold long values (e.g. summaries) across lines
+    ).strip()
+    body = _normalize_body(body)
+    if not body:
+        return f"---\n{dumped}\n---\n"
+    return f"---\n{dumped}\n---\n\n{body}\n"
+
+
+_REQUIRED_KEYS = ("task_id", "task_name", "status", "date_created")
+
+
+def _yaml_dates_to_iso(value: Any) -> Any:
+    # YAML parses unquoted dates (e.g. `due_date: 2026-03-01`) as date objects;
+    # the rest of the code expects ISO strings.
+    if isinstance(value, dt.datetime):
+        return value.date().isoformat()
+    if isinstance(value, dt.date):
+        return value.isoformat()
+    return value
 
 
 def parse_task(task_dir: Path) -> Task:
     task_md = task_dir / "task.md"
     text = task_md.read_text(encoding="utf-8")
     data, body = split_frontmatter(text)
-    # YAML parses unquoted dates (e.g. `due_date: 2026-03-01`) as date objects;
-    # the rest of the code expects ISO strings.
-    for key in TASK_DATE_KEYS:
-        value = data.get(key)
-        if isinstance(value, dt.datetime):
-            data[key] = value.date().isoformat()
-        elif isinstance(value, dt.date):
-            data[key] = value.isoformat()
-    payload: dict[str, Any] = {}
-    missing_required: list[str] = []
-    for field in fields(TaskMetadata):
-        if field.name in data:
-            payload[field.name] = data[field.name]
-            continue
-        if field.default is not MISSING:
-            payload[field.name] = field.default
-            continue
-        if field.default_factory is not MISSING:
-            payload[field.name] = field.default_factory()
-            continue
-        missing_required.append(field.name)
+    data = {str(key): _yaml_dates_to_iso(value) for key, value in data.items()}
+    missing_required = [key for key in _REQUIRED_KEYS if data.get(key) in (None, "")]
     if missing_required:
         raise ValueError(f"Task metadata missing keys {missing_required} in {task_md}")
-    meta = TaskMetadata(**payload)
+
+    meta = TaskMetadata(
+        task_id=str(data["task_id"]),
+        task_name=str(data["task_name"]),
+        status=str(data["status"]),
+        date_created=str(data["date_created"]),
+        date_started=data.get("date_started"),
+        date_completed=data.get("date_completed"),
+        summary="" if data.get("summary") is None else str(data["summary"]),
+        depends_on=[str(item) for item in data.get("depends_on") or []],
+        tags=[str(item) for item in data.get("tags") or []],
+        # Configured fields and custom keys, kept verbatim and in file order.
+        fields={
+            key: value
+            for key, value in data.items()
+            if key not in FIXED_KEYS and key not in RETIRED_KEYS
+        },
+    )
     return Task(metadata=meta, body=body, task_dir=task_dir)
 
 
 def write_task(task: Task) -> None:
     task.task_dir.mkdir(parents=True, exist_ok=True)
-    text = render_frontmatter(task.metadata.to_dict(), task.body)
+    text = render_frontmatter(task.metadata.frontmatter(), task.body)
     task.task_md_path.write_text(text, encoding="utf-8")
 
 

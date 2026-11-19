@@ -91,6 +91,12 @@ def _read_config(path: Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
+def _default_columns(field_names=None) -> list[dict[str, int | str]]:
+    """Default list columns for the given built-in field names (default: what init writes)."""
+    names = storage.INIT_DEFAULT_FIELD_NAMES if field_names is None else field_names
+    return storage.default_list_table_columns([storage.BUILTIN_FIELDS[name] for name in names])
+
+
 def _strip_osc8(text: str) -> str:
     return OSC8_LINK_RE.sub(r"\1", text)
 
@@ -112,10 +118,8 @@ def test_init_idempotent(tmp_path: Path) -> None:
     cfg = _read_config(root / "config.yaml")
     assert cfg["settings"]["interactive_enabled"] is True
     assert cfg["settings"]["show_banner"] is True
-    assert cfg["settings"]["due_dates"] == {
-        "enabled": True,
-    }
-    assert cfg["settings"]["list_table"]["columns"] == storage.default_list_table_columns()
+    assert cfg["settings"]["fields"] == list(storage.INIT_DEFAULT_FIELD_NAMES)
+    assert cfg["settings"]["list_table"]["columns"] == _default_columns()
 
 
 def test_init_nointeractive_creates_default_config(tmp_path: Path) -> None:
@@ -125,7 +129,7 @@ def test_init_nointeractive_creates_default_config(tmp_path: Path) -> None:
     cfg = _read_config(root / "config.yaml")
     assert cfg["settings"]["interactive_enabled"] is True
     assert cfg["settings"]["show_banner"] is True
-    assert cfg["settings"]["list_table"]["columns"] == storage.default_list_table_columns()
+    assert cfg["settings"]["list_table"]["columns"] == _default_columns()
 
 
 def test_init_interactive_uses_form_values(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -156,11 +160,11 @@ def test_init_interactive_uses_form_values(monkeypatch: pytest.MonkeyPatch, tmp_
     ]
 
 
-def test_init_interactive_reports_legacy_due_date_config_to_form(
+def test_init_interactive_passes_legacy_field_defaults_to_form(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    # Purpose: init must tell the form that a config predating due dates has no `due_dates`
-    # section, so the form can preselect the due_date column for upgrading users.
+    # Purpose: a config without settings.fields uses all four built-in fields; init must
+    # preselect exactly those so re-running it does not silently drop a field.
     root = tmp_path / ".tasks"
     root.mkdir()
     (root / "config.yaml").write_text(
@@ -177,9 +181,34 @@ def test_init_interactive_reports_legacy_due_date_config_to_form(
     monkeypatch.setattr("dot_tasks.cli.init_config_form", _form)
     runner.invoke(app, ["init", "--tasks-root", str(root)])
 
-    assert captured["default_due_dates_enabled"] is True
-    assert captured["due_dates_configured"] is False
+    assert captured["current_field_entries"] is None
+    assert captured["default_field_names"] == list(storage.DEFAULT_FIELD_NAMES)
     assert captured["default_list_column_names"] == ["task_name"]
+
+
+def test_init_migrates_task_body_sections_to_template(tmp_path: Path) -> None:
+    # Purpose: init moves a 0.1 settings.task_body_sections config into
+    # .tasks/templates/task.md (skipping Summary, now a frontmatter field) and removes the
+    # retired settings so they stop warning.
+    root = tmp_path / ".tasks"
+    root.mkdir()
+    (root / "config.yaml").write_text(
+        "settings:\n"
+        "  task_body_sections:\n"
+        "  - {name: Summary, default: '- TODO'}\n"
+        "  - {name: Acceptance Criteria, default: '- TODO'}\n"
+        "  due_dates: {enabled: true}\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["init", "--nointeractive", "--tasks-root", str(root)])
+
+    assert result.exit_code == 0
+    assert (root / "templates" / "task.md").read_text(encoding="utf-8") == "## Acceptance Criteria\n- TODO\n"
+    settings = _read_config(root / "config.yaml")["settings"]
+    assert "task_body_sections" not in settings and "due_dates" not in settings
+    later = runner.invoke(app, ["list", "--tasks-root", str(root)])
+    assert "no longer supported" not in later.output
 
 
 def test_init_interactive_updates_existing_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -617,7 +646,8 @@ def test_create_rejects_duplicate_name(tmp_path: Path) -> None:
 
 
 def test_create_writes_only_task_md(tmp_path: Path) -> None:
-    # Purpose: since 0.2.0 the tool writes only task.md (no activity.md); metadata comes from flags.
+    # Purpose: since 0.2.0 the tool writes only task.md (no activity.md); metadata comes from
+    # key=value assignments, with the summary in the frontmatter.
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
     result = runner.invoke(
@@ -625,12 +655,9 @@ def test_create_writes_only_task_md(tmp_path: Path) -> None:
         [
             "create",
             "write-files",
-            "--summary",
-            "hello",
-            "--priority",
-            "p1",
-            "--effort",
-            "l",
+            "summary=hello",
+            "priority=p1",
+            "effort=l",
             "--tasks-root",
             str(root),
         ],
@@ -642,57 +669,38 @@ def test_create_writes_only_task_md(tmp_path: Path) -> None:
     assert meta["task_name"] == "write-files"
     assert meta["priority"] == "p1"
     assert meta["effort"] == "l"
-    assert meta["spec_readiness"] == "unspecified"
+    assert meta["summary"] == "hello"
+    assert "spec_readiness" not in meta
 
 
-def test_create_accepts_spec_readiness(tmp_path: Path) -> None:
-    root = tmp_path / ".tasks"
-    runner.invoke(app, ["init", "--tasks-root", str(root)])
-    result = runner.invoke(
-        app,
-        [
-            "create",
-            "spec-ready-task",
-            "--spec-readiness",
-            "ready",
-            "--tasks-root",
-            str(root),
-        ],
-    )
-    assert result.exit_code == 0
-    task_dir = _task_dir(root, "todo", "spec-ready-task")
-    meta, _ = _read_task_md(task_dir / "task.md")
-    assert meta["spec_readiness"] == "ready"
-
-
-def test_create_accepts_due_date_even_when_feature_disabled(tmp_path: Path) -> None:
-    # Purpose: explicit --due-date stays usable by scripts even when due-date display is disabled in config.
+def test_assignment_to_unconfigured_field_is_rejected(tmp_path: Path) -> None:
+    # Purpose: a field not listed in settings.fields cannot be set; the error names the
+    # configured fields and where to add new ones (no silent writes of hidden values).
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
     cfg = _read_config(root / "config.yaml")
-    cfg["settings"]["due_dates"]["enabled"] = False
-    (root / "config.yaml").write_text(
-        yaml.safe_dump(cfg, sort_keys=False),
-        encoding="utf-8",
-    )
+    cfg["settings"]["fields"] = ["priority"]
+    (root / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
 
     result = runner.invoke(
         app,
-        [
-            "create",
-            "dated-task",
-            "--due-date",
-            "2026-08-15",
-            "--tasks-root",
-            str(root),
-        ],
+        ["create", "dated-task", "due_date=2026-08-15", "--tasks-root", str(root)],
     )
 
-    assert result.exit_code == 0
-    meta, _ = _read_task_md(_task_md_path(root, "todo", "dated-task"))
-    assert meta["due_date"] == "2026-08-15"
-    json_result = runner.invoke(app, ["view", "dated-task", "--json", "--tasks-root", str(root)])
-    assert '"due_date": "2026-08-15"' in json_result.output
+    assert result.exit_code == 1
+    assert "Unknown field 'due_date'. Configured fields: summary, priority" in result.output
+    assert not list((root / "todo").iterdir())
+
+
+def test_spec_readiness_is_no_longer_a_field(tmp_path: Path) -> None:
+    # Purpose: 0.2.0 deletes spec_readiness from the tool; setting it is an unknown field.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["create", "x", "spec_readiness=ready", "--tasks-root", str(root)])
+
+    assert result.exit_code == 1
+    assert "Unknown field 'spec_readiness'" in result.output
 
 
 @pytest.mark.parametrize("due_date", ["2026-02-30", "20260228", "tomorrow"])
@@ -703,7 +711,7 @@ def test_create_rejects_invalid_due_date(tmp_path: Path, due_date: str) -> None:
 
     result = runner.invoke(
         app,
-        ["create", "bad-date", "--due-date", due_date, "--tasks-root", str(root)],
+        ["create", "bad-date", f"due_date={due_date}", "--tasks-root", str(root)],
     )
 
     assert result.exit_code == 1
@@ -721,8 +729,7 @@ def test_update_sets_and_clears_due_date(tmp_path: Path) -> None:
         [
             "update",
             "dated-task",
-            "--due-date",
-            "2026-08-15",
+            "due_date=2026-08-15",
             "--tasks-root",
             str(root),
         ],
@@ -733,38 +740,43 @@ def test_update_sets_and_clears_due_date(tmp_path: Path) -> None:
 
     clear_result = runner.invoke(
         app,
-        ["update", "dated-task", "--clear-due-date", "--tasks-root", str(root)],
+        ["update", "dated-task", "due_date=", "--tasks-root", str(root)],
     )
     assert clear_result.exit_code == 0
     meta, _ = _read_task_md(_task_md_path(root, "todo", "dated-task"))
     assert meta["due_date"] is None
 
 
-def test_update_rejects_setting_and_clearing_due_date_together(tmp_path: Path) -> None:
-    # Purpose: conflicting --due-date/--clear-due-date fail before any change (the task stays in todo).
+def test_update_with_invalid_assignment_changes_nothing(tmp_path: Path) -> None:
+    # Purpose: assignments are validated before anything moves; an invalid value combined with
+    # a status change leaves the task where it was.
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
     runner.invoke(app, ["create", "dated-task", "--tasks-root", str(root)])
 
     result = runner.invoke(
         app,
-        [
-            "update",
-            "dated-task",
-            "--status",
-            "doing",
-            "--due-date",
-            "2026-08-15",
-            "--clear-due-date",
-            "--tasks-root",
-            str(root),
-        ],
+        ["update", "dated-task", "--status", "doing", "priority=p9", "--tasks-root", str(root)],
     )
 
     assert result.exit_code == 1
-    assert "Cannot use due_date and clear_due_date together" in result.output
+    assert "Invalid priority: 'p9' is not one of p0, p1, p2, p3" in result.output
     assert _task_md_path(root, "todo", "dated-task").exists()
     assert not _task_dir(root, "doing", "dated-task").exists()
+
+
+def test_assignment_rejects_structural_fields(tmp_path: Path) -> None:
+    # Purpose: structural fields have their own commands/flags; key=value refuses them and says
+    # what to use instead.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "x", "--tasks-root", str(root)])
+
+    tags = runner.invoke(app, ["update", "x", "tags=a", "--tasks-root", str(root)])
+    status = runner.invoke(app, ["update", "x", "status=doing", "--tasks-root", str(root)])
+
+    assert tags.exit_code == 1 and "use --tag" in tags.output
+    assert status.exit_code == 1 and "use start/complete" in status.output
 
 
 def test_config_warning_printed_once_per_command(tmp_path: Path) -> None:
@@ -828,23 +840,26 @@ def test_mutating_command_does_not_rewrite_unchanged_task_files(tmp_path: Path) 
     assert legacy_md.read_text(encoding="utf-8") == legacy_text
 
 
-def test_mutating_command_still_rewrites_tasks_whose_derived_state_changes(tmp_path: Path) -> None:
-    # Purpose: skipping unchanged writes must not skip real changes: adding a dependent task
-    # must still update the dependency's `blocked_by` in its file.
+def test_adding_a_dependent_does_not_rewrite_the_dependency(tmp_path: Path) -> None:
+    # Purpose: `blocks` is derived on load, so adding a dependent task leaves the dependency's
+    # file untouched while view still reports the new dependent.
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
     runner.invoke(app, ["create", "base-task", "--tasks-root", str(root)])
     base_md = _task_md_path(root, "todo", "base-task")
+    before = base_md.read_text(encoding="utf-8")
 
     result = runner.invoke(
         app,
         ["create", "child-task", "--depends-on", "base-task", "--tasks-root", str(root)],
     )
+    view = runner.invoke(app, ["view", "base-task", "--json", "--tasks-root", str(root)])
 
-    assert result.exit_code == 0, result.output
+    assert result.exit_code == 0
+    assert base_md.read_text(encoding="utf-8") == before
+    assert "blocked_by" not in before and "blocks" not in before
     child_meta, _ = _read_task_md(_task_md_path(root, "todo", "child-task"))
-    base_meta, _ = _read_task_md(base_md)
-    assert base_meta["blocked_by"] == [child_meta["task_id"]]
+    assert json.loads(view.output)["metadata"]["blocks"] == [child_meta["task_id"]]
 
 
 def test_create_non_tty_uses_plain_renderer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -901,9 +916,7 @@ def test_create_plain_interactive_output_has_osc8_links(
     output = _strip_osc8(result.output)
     task_dir = _task_dir(root, "todo", "plain-link-create").resolve()
     assert f"Created: plain-link-create (" in output
-    assert "links: dir | task.md" in output
-    assert str(task_dir) not in output
-    assert str(task_dir / "task.md") not in output
+    assert output.splitlines()[-1] == str(task_dir / "task.md")
 
 
 def test_create_plain_noninteractive_output_has_no_osc8_links(
@@ -922,9 +935,8 @@ def test_create_plain_noninteractive_output_has_no_osc8_links(
 
     task_dir = _task_dir(root, "todo", "plain-no-link-create").resolve()
     assert f"Created: plain-no-link-create (" in result.output
-    assert "links: dir | task.md" in result.output
-    assert str(task_dir) not in result.output
-    assert str(task_dir / "task.md") not in result.output
+    # Agents (non-interactive) get the plain absolute path of task.md to open.
+    assert result.output.splitlines()[-1] == str(task_dir / "task.md")
     assert (task_dir / "task.md").exists()
 
 
@@ -971,52 +983,36 @@ def test_complete_moves_and_sets_date(tmp_path: Path) -> None:
     assert meta["date_completed"] == dt.date.today().isoformat()
 
 
-def test_task_body_whitespace_is_stable_across_lifecycle_writes(tmp_path: Path) -> None:
+def test_template_body_is_copied_and_stays_stable_across_lifecycle_writes(tmp_path: Path) -> None:
+    # Purpose: create copies .tasks/templates/task.md verbatim into the body, and later
+    # frontmatter writes (update/start/complete) never alter the body.
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "whitespace-stability", "--tasks-root", str(root)])
+    template = "## Done when\n\n## Outcome\n<!-- Filled at wrap-up. -->\n"
+    (root / "templates").mkdir()
+    (root / "templates" / "task.md").write_text(template, encoding="utf-8")
 
-    _, body_created = _read_task_md(_task_md_path(root, "todo", "whitespace-stability"))
-    assert _leading_newline_count(body_created) == 1
+    runner.invoke(app, ["create", "stable", "summary=One line.", "--tasks-root", str(root)])
+    _, body_created = _read_task_md(_task_md_path(root, "todo", "stable"))
+    runner.invoke(app, ["update", "stable", "priority=p1", "--tasks-root", str(root)])
+    runner.invoke(app, ["start", "stable", "--tasks-root", str(root)])
+    runner.invoke(app, ["complete", "stable", "--tasks-root", str(root)])
+    meta, body_completed = _read_task_md(_task_md_path(root, "done", "stable"))
 
-    runner.invoke(
-        app,
-        ["update", "whitespace-stability", "--priority", "p1", "--tasks-root", str(root)],
-    )
-    _, body_update_one = _read_task_md(_task_md_path(root, "todo", "whitespace-stability"))
-    assert _leading_newline_count(body_update_one) == 1
-
-    runner.invoke(
-        app,
-        ["update", "whitespace-stability", "--effort", "l", "--tasks-root", str(root)],
-    )
-    _, body_update_two = _read_task_md(_task_md_path(root, "todo", "whitespace-stability"))
-    assert _leading_newline_count(body_update_two) == 1
-
-    runner.invoke(app, ["start", "whitespace-stability", "--tasks-root", str(root)])
-    _, body_started = _read_task_md(_task_md_path(root, "doing", "whitespace-stability"))
-    assert _leading_newline_count(body_started) == 1
-
-    runner.invoke(app, ["complete", "whitespace-stability", "--tasks-root", str(root)])
-    _, body_completed = _read_task_md(_task_md_path(root, "done", "whitespace-stability"))
-    assert _leading_newline_count(body_completed) == 1
+    assert body_created == "\n" + template
+    assert body_completed == body_created
+    assert meta["summary"] == "One line."
 
 
-def test_update_task_does_not_increase_leading_body_newlines_for_other_tasks(tmp_path: Path) -> None:
+def test_create_without_template_writes_frontmatter_only(tmp_path: Path) -> None:
+    # Purpose: with no body template the body is empty; the description is written in an editor.
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "task-a", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "task-b", "--tasks-root", str(root)])
 
-    _, body_before = _read_task_md(_task_md_path(root, "todo", "task-b"))
-    before_count = _leading_newline_count(body_before)
+    runner.invoke(app, ["create", "bare", "--tasks-root", str(root)])
 
-    runner.invoke(app, ["update", "task-a", "--priority", "p1", "--tasks-root", str(root)])
-
-    _, body_after = _read_task_md(_task_md_path(root, "todo", "task-b"))
-    after_count = _leading_newline_count(body_after)
-    assert before_count == 1
-    assert after_count == 1
+    text = _task_md_path(root, "todo", "bare").read_text(encoding="utf-8")
+    assert text.startswith("---\n") and text.endswith("\n---\n")
 
 
 def test_rename_preserves_dependencies_by_task_id(tmp_path: Path) -> None:
@@ -1052,7 +1048,7 @@ def test_view_renders_dependencies_as_name_and_id(tmp_path: Path) -> None:
     assert f"task-view ({task_id})" in output
     assert "[todo] [p2] [m] [deps: blocked(1)]" in output
     assert f"depends_on: dep-view ({dep_id}) [todo]" in output
-    assert "blocked_by: -" in output
+    assert "blocks: -" in output
     assert f"dir: {task_dir.name}" in output
     assert "files: task.md\n" in output
 
@@ -1090,7 +1086,9 @@ def test_view_non_tty_plain_output_has_no_osc8_sequences(monkeypatch: pytest.Mon
     assert "\x1b]8;;" not in result.output
 
 
-def test_view_renders_blocked_by_as_name_and_id(tmp_path: Path) -> None:
+def test_view_renders_blocks_as_name_and_id(tmp_path: Path) -> None:
+    # Purpose: `blocks` lists the tasks that depend on this one (derived, not stored), shown as
+    # name (id) [status] in view.
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
     runner.invoke(app, ["create", "dep-view", "--tasks-root", str(root)])
@@ -1099,8 +1097,9 @@ def test_view_renders_blocked_by_as_name_and_id(tmp_path: Path) -> None:
     task_id = task_meta["task_id"]
 
     result = runner.invoke(app, ["view", "dep-view", "--tasks-root", str(root)])
+
     assert result.exit_code == 0
-    assert f"blocked_by: task-view ({task_id}) [todo]" in result.output
+    assert f"blocks: task-view ({task_id}) [todo]" in result.output
 
 
 def test_view_non_tty_uses_plain_renderer(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -1111,11 +1110,11 @@ def test_view_non_tty_uses_plain_renderer(monkeypatch: pytest.MonkeyPatch, tmp_p
     monkeypatch.setattr("dot_tasks.cli._can_render_rich_detail_output", lambda: False)
     monkeypatch.setattr(
         "dot_tasks.cli.render.render_task_detail_plain",
-        lambda task, deps, blocked_by, unmet_count, **kwargs: "PLAIN-DETAIL",
+        lambda *args, **kwargs: "PLAIN-DETAIL",
     )
     monkeypatch.setattr(
         "dot_tasks.cli.render.render_task_detail_rich",
-        lambda task, deps, blocked_by, unmet_count: pytest.fail("rich detail renderer should not run"),
+        lambda *args, **kwargs: pytest.fail("rich detail renderer should not run"),
     )
 
     result = runner.invoke(app, ["view", "plain-view", "--tasks-root", str(root)])
@@ -1137,7 +1136,7 @@ def test_view_tty_uses_rich_renderer(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     )
     monkeypatch.setattr(
         "dot_tasks.cli.render.render_task_detail_rich",
-        lambda task, deps, blocked_by, unmet_count, **kwargs: "RICH-DETAIL",
+        lambda *args, **kwargs: "RICH-DETAIL",
     )
     captured: list[object] = []
     monkeypatch.setattr("dot_tasks.cli._print_rich", lambda renderable: captured.append(renderable))
@@ -1301,8 +1300,8 @@ def test_graph_empty_scope_prints_no_tasks_found(tmp_path: Path) -> None:
 def test_list_grouped_sorted(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "a", "--priority", "p2", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "b", "--priority", "p0", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "a", "priority=p2", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "b", "priority=p0", "--tasks-root", str(root)])
     runner.invoke(app, ["start", "a", "--tasks-root", str(root)])
     result = runner.invoke(app, ["list", "--tasks-root", str(root)])
     assert result.exit_code == 0
@@ -1391,7 +1390,7 @@ def test_list_done_swaps_deps_for_completed_for_default_column_names(
     runner.invoke(app, ["init", "--tasks-root", str(root)])
     runner.invoke(app, ["create", "done-task", "--tasks-root", str(root)])
     runner.invoke(app, ["complete", "done-task", "--tasks-root", str(root)])
-    columns = storage.default_list_table_columns()
+    columns = _default_columns()
     columns = [
         {"name": column["name"], "width": (40 if column["name"] == "task_name" else column["width"])}
         for column in columns
@@ -1655,10 +1654,10 @@ def test_list_non_tty_uses_plain_renderer(monkeypatch: pytest.MonkeyPatch, tmp_p
     runner.invoke(app, ["create", "plain-view", "--tasks-root", str(root)])
 
     monkeypatch.setattr("dot_tasks.cli._can_render_rich_list_output", lambda: False)
-    monkeypatch.setattr("dot_tasks.cli.render.render_task_list_plain", lambda tasks, unmet, columns: "PLAIN-OUT")
+    monkeypatch.setattr("dot_tasks.cli.render.render_task_list_plain", lambda *args, **kwargs: "PLAIN-OUT")
     monkeypatch.setattr(
         "dot_tasks.cli.render.render_task_list_rich",
-        lambda tasks, unmet, columns: pytest.fail("rich renderer should not run"),
+        lambda *args, **kwargs: pytest.fail("rich renderer should not run"),
     )
 
     result = runner.invoke(app, ["list", "--tasks-root", str(root)])
@@ -1674,7 +1673,7 @@ def test_list_tty_uses_rich_renderer(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     monkeypatch.setattr("dot_tasks.cli._can_render_rich_list_output", lambda: True)
     monkeypatch.setattr(
         "dot_tasks.cli.render.render_task_list_rich",
-        lambda tasks, unmet, columns, **kwargs: "RICH-OUT",
+        lambda *args, **kwargs: "RICH-OUT",
     )
     captured: list[object] = []
     monkeypatch.setattr("dot_tasks.cli._print_rich", lambda renderable: captured.append(renderable))
@@ -1807,7 +1806,7 @@ def test_list_non_tty_passes_configured_columns(
     monkeypatch.setattr("dot_tasks.cli._can_render_rich_list_output", lambda: False)
     captured_columns: list[list[dict[str, int | str]]] = []
 
-    def _fake_plain(tasks, unmet, columns):
+    def _fake_plain(tasks, unmet, columns, *args):
         captured_columns.append(columns)
         return "PLAIN-OUT"
 
@@ -1821,74 +1820,61 @@ def test_list_non_tty_passes_configured_columns(
     ]]
 
 
-def test_list_suppresses_due_date_column_when_feature_disabled(tmp_path: Path) -> None:
-    # Purpose: with due dates disabled, list hides the due_date column even if it is configured.
+def test_list_skips_columns_for_unconfigured_fields(tmp_path: Path) -> None:
+    # Purpose: a list column naming a field that is not configured is ignored with a warning.
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
-    runner.invoke(
-        app,
-        [
-            "create",
-            "hidden-due-date",
-            "--due-date",
-            "2026-08-15",
-            "--tasks-root",
-            str(root),
-        ],
-    )
+    runner.invoke(app, ["create", "hidden", "due_date=2026-08-15", "--tasks-root", str(root)])
     cfg = _read_config(root / "config.yaml")
-    cfg["settings"]["due_dates"]["enabled"] = False
+    cfg["settings"]["fields"] = ["priority"]
     cfg["settings"]["list_table"]["columns"] = [
         {"name": "task_name", "width": 20},
         {"name": "due_date", "width": 10},
     ]
-    (root / "config.yaml").write_text(
-        yaml.safe_dump(cfg, sort_keys=False),
-        encoding="utf-8",
-    )
+    (root / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
 
     result = runner.invoke(app, ["list", "--tasks-root", str(root)])
 
     assert result.exit_code == 0
-    assert "hidden-due-date" in result.output
-    assert "due_date" not in result.output
+    assert "List column 'due_date'" in result.output
     assert "2026-08-15" not in result.output
 
 
-def test_list_and_view_show_due_date_when_enabled(tmp_path: Path) -> None:
-    # Purpose: with due dates enabled, list shows the due_date column and view shows the date.
+def test_custom_field_can_be_set_listed_filtered_and_viewed(tmp_path: Path) -> None:
+    # Purpose: a project-defined choice field works end to end: create/update assignments,
+    # list column, list filter (AND across keys, OR within a key, key= for unset) and view.
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
-    runner.invoke(
-        app,
-        [
-            "create",
-            "visible-due-date",
-            "--due-date",
-            "2026-08-15",
-            "--tasks-root",
-            str(root),
-        ],
-    )
     cfg = _read_config(root / "config.yaml")
-    cfg["settings"]["due_dates"]["enabled"] = True
+    cfg["settings"]["fields"] = [
+        "priority",
+        {"name": "kind", "type": "choice", "values": ["theory", "experiment", "writing"]},
+    ]
     cfg["settings"]["list_table"]["columns"] = [
         {"name": "task_name", "width": 20},
-        {"name": "due_date", "width": 10},
+        {"name": "kind", "width": 10},
     ]
-    (root / "config.yaml").write_text(
-        yaml.safe_dump(cfg, sort_keys=False),
-        encoding="utf-8",
-    )
+    (root / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+    runner.invoke(app, ["create", "lemma", "kind=theory", "priority=p0", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "runs", "kind=experiment", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "draft", "--tasks-root", str(root)])
+    runner.invoke(app, ["update", "draft", "kind=writing", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "loose", "--tasks-root", str(root)])
 
-    list_result = runner.invoke(app, ["list", "--tasks-root", str(root)])
-    view_result = runner.invoke(app, ["view", "visible-due-date", "--tasks-root", str(root)])
+    def names(*filters: str) -> list[str]:
+        result = runner.invoke(app, ["list", *filters, "--json", "--tasks-root", str(root)])
+        assert result.exit_code == 0, result.output
+        return sorted(item["task_name"] for item in json.loads(result.output))
 
-    assert list_result.exit_code == 0
-    assert "due_date" in list_result.output
-    assert "2026-08-15" in list_result.output
-    assert view_result.exit_code == 0
-    assert "due_date: 2026-08-15" in _strip_osc8(view_result.output)
+    listed = runner.invoke(app, ["list", "--tasks-root", str(root)])
+    viewed = runner.invoke(app, ["view", "lemma", "--tasks-root", str(root)])
+
+    assert "theory" in listed.output and "kind" in listed.output
+    assert names("kind=theory") == ["lemma"]
+    assert names("kind=theory", "kind=writing") == ["draft", "lemma"]
+    assert names("kind=theory", "priority=p2") == []
+    assert names("kind=") == ["loose"]
+    assert "[p0] [theory]" in _strip_osc8(viewed.output)
 
 
 def test_list_tty_passes_configured_columns(
@@ -1915,7 +1901,7 @@ def test_list_tty_passes_configured_columns(
     monkeypatch.setattr("dot_tasks.cli._can_render_rich_list_output", lambda: True)
     captured_columns: list[list[dict[str, int | str]]] = []
 
-    def _fake_rich(tasks, unmet, columns, **kwargs):
+    def _fake_rich(tasks, unmet, columns, *args, **kwargs):
         captured_columns.append(columns)
         return "RICH-OUT"
 
@@ -1956,7 +1942,7 @@ def test_list_invalid_column_config_warns_and_uses_defaults(
     monkeypatch.setattr("dot_tasks.cli._can_render_rich_list_output", lambda: False)
     captured_columns: list[list[dict[str, int | str]]] = []
 
-    def _fake_plain(tasks, unmet, columns):
+    def _fake_plain(tasks, unmet, columns, *args):
         captured_columns.append(columns)
         return "PLAIN-OUT"
 
@@ -1965,7 +1951,7 @@ def test_list_invalid_column_config_warns_and_uses_defaults(
     result = runner.invoke(app, ["list", "--tasks-root", str(root)])
     assert result.exit_code == 0
     assert "Warning: No valid settings.list_table.columns" in result.output
-    assert captured_columns == [storage.default_list_table_columns()]
+    assert captured_columns == [_default_columns()]
 
 
 def test_subdirectory_discovers_root(tmp_path: Path) -> None:
@@ -2166,9 +2152,7 @@ def test_update_interactive_form_replaces_dependencies(
     monkeypatch.setattr(
         "dot_tasks.cli.update_form",
         lambda task, dependency_options, tag_options, **kwargs: {
-            "priority": None,
-            "effort": None,
-            "owner": task.metadata.owner or "",
+            "field_values": {},
             "tags": [],
             "depends_on": [dep_b_id],
             "replace_depends_on": True,
@@ -2210,10 +2194,7 @@ def test_update_dependency_options_show_status_and_use_list_order(
         captured["dependency_options"] = dependency_options
         captured["tag_options"] = tag_options
         return {
-            "priority": None,
-            "effort": None,
-            "spec_readiness": None,
-            "owner": task.metadata.owner or "",
+            "field_values": {},
             "tags": task.metadata.tags,
             "depends_on": [],
             "replace_depends_on": False,
@@ -2265,10 +2246,7 @@ def test_update_interactive_form_preserves_dependencies_when_not_replacing(
     monkeypatch.setattr(
         "dot_tasks.cli.update_form",
         lambda task, dependency_options, tag_options, **kwargs: {
-            "priority": None,
-            "effort": None,
-            "spec_readiness": None,
-            "owner": task.metadata.owner or "",
+            "field_values": {},
             "tags": task.metadata.tags,
             "depends_on": [],
             "replace_depends_on": False,
@@ -2279,27 +2257,6 @@ def test_update_interactive_form_preserves_dependencies_when_not_replacing(
     assert result.exit_code == 0
     meta, _ = _read_task_md(_task_dir(root, "todo", "main-task") / "task.md")
     assert meta["depends_on"] == [dep_a_id]
-
-
-def test_update_accepts_spec_readiness(tmp_path: Path) -> None:
-    root = tmp_path / ".tasks"
-    runner.invoke(app, ["init", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "update-spec-readiness", "--tasks-root", str(root)])
-
-    result = runner.invoke(
-        app,
-        [
-            "update",
-            "update-spec-readiness",
-            "--spec-readiness",
-            "autonomous",
-            "--tasks-root",
-            str(root),
-        ],
-    )
-    assert result.exit_code == 0
-    meta, _ = _read_task_md(_task_dir(root, "todo", "update-spec-readiness") / "task.md")
-    assert meta["spec_readiness"] == "autonomous"
 
 
 def test_update_accepts_status(tmp_path: Path) -> None:
@@ -2358,11 +2315,7 @@ def test_create_interactive_form_receives_tag_options(
         captured["tag_options"] = tag_options
         return {
             "task_name": "interactive-created",
-            "priority": "p2",
-            "effort": "m",
-            "owner": None,
-            "summary": "",
-            "spec_readiness": "unspecified",
+            "field_values": {},
             "tags": [],
             "depends_on": [],
         }
@@ -2402,11 +2355,7 @@ def test_create_interactive_form_receives_name_validator(
         captured["validate_task_name"] = validator
         return {
             "task_name": "interactive-created",
-            "priority": "p2",
-            "effort": "m",
-            "owner": None,
-            "summary": "",
-            "spec_readiness": "unspecified",
+            "field_values": {},
             "tags": [],
             "depends_on": [],
         }
@@ -2417,81 +2366,6 @@ def test_create_interactive_form_receives_name_validator(
     result = runner.invoke(app, ["create", "--tasks-root", str(root)])
     assert result.exit_code == 0
     assert callable(captured["validate_task_name"])
-
-
-def test_create_uses_custom_sections_from_config(tmp_path: Path) -> None:
-    root = tmp_path / ".tasks"
-    runner.invoke(app, ["init", "--tasks-root", str(root), "--nointeractive"])
-    (root / "config.yaml").write_text(
-        (
-            "settings:\n"
-            "  interactive_enabled: true\n"
-            "  show_banner: true\n"
-            "  list_table:\n"
-            "    columns:\n"
-            "      - name: task_name\n"
-            "        width: 32\n"
-            "  task_body_sections:\n"
-            "    - name: Overview\n"
-            '      default: "- describe the change"\n'
-            "    - name: Design Notes\n"
-            '      default: "- TODO"\n'
-        ),
-        encoding="utf-8",
-    )
-
-    result = runner.invoke(app, ["create", "custom-sections", "--tasks-root", str(root)])
-    assert result.exit_code == 0
-
-    task_dir = _task_dir(root, "todo", "custom-sections")
-    _, body = _read_task_md(task_dir / "task.md")
-    assert "## Overview" in body
-    assert "- describe the change" in body
-    assert "## Design Notes" in body
-    assert "## Summary" not in body
-    assert "## Acceptance Criteria" not in body
-
-
-def test_create_summary_populates_summary_section(tmp_path: Path) -> None:
-    root = tmp_path / ".tasks"
-    runner.invoke(app, ["init", "--tasks-root", str(root), "--nointeractive"])
-
-    result = runner.invoke(
-        app,
-        ["create", "fill-summary", "--summary", "implement the feature", "--tasks-root", str(root)],
-    )
-    assert result.exit_code == 0
-
-    task_dir = _task_dir(root, "todo", "fill-summary")
-    _, body = _read_task_md(task_dir / "task.md")
-    assert "## Summary" in body
-    assert "- implement the feature" in body
-
-
-def test_create_empty_summary_uses_default(tmp_path: Path) -> None:
-    root = tmp_path / ".tasks"
-    runner.invoke(app, ["init", "--tasks-root", str(root), "--nointeractive"])
-
-    result = runner.invoke(app, ["create", "no-summary", "--tasks-root", str(root)])
-    assert result.exit_code == 0
-
-    task_dir = _task_dir(root, "todo", "no-summary")
-    _, body = _read_task_md(task_dir / "task.md")
-    assert "## Summary" in body
-    assert "- TODO" in body
-    assert "## Acceptance Criteria" not in body
-
-
-def test_init_nointeractive_config_includes_task_body_sections(tmp_path: Path) -> None:
-    root = tmp_path / ".tasks"
-    result = runner.invoke(app, ["init", "--tasks-root", str(root), "--nointeractive"])
-    assert result.exit_code == 0
-
-    cfg = _read_config(root / "config.yaml")
-    sections = cfg["settings"]["task_body_sections"]
-    assert sections == [
-        {"name": "Summary", "default": "- TODO"},
-    ]
 
 
 def test_update_prevents_circular_dependency(tmp_path: Path) -> None:
@@ -2633,41 +2507,41 @@ def test_log_activity_command_is_removed(tmp_path: Path) -> None:
     assert "No such command" in result.output
 
 
-def test_update_sections_keeps_hand_added_sections_and_order(tmp_path: Path) -> None:
-    # Purpose: the model edits task.md bodies directly; updating configured sections (the
-    # interactive update form) must replace only those sections and keep added ones in place.
-    from dot_tasks.service import TaskService
 
+
+def test_invalid_stored_field_value_warns_and_is_kept(tmp_path: Path) -> None:
+    # Purpose: a stored value that no longer fits its configured field (e.g. a removed choice)
+    # warns on every command (once, naming task, field and allowed values) without failing,
+    # and the value is kept when the task is rewritten for other reasons.
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "edited-body", "--summary", "old", "--tasks-root", str(root)])
-    task_md = _task_md_path(root, "todo", "edited-body")
-    front = task_md.read_text(encoding="utf-8").split("\n---\n", 1)[0]
-    task_md.write_text(
-        front
-        + "\n---\n\nIntro line.\n\n## Summary\n- old\n\n## Outcome\n- shipped\n\n## Notes\n- keep me\n",
-        encoding="utf-8",
-    )
+    runner.invoke(app, ["create", "old-task", "--tasks-root", str(root)])
+    task_md = _task_md_path(root, "todo", "old-task")
+    task_md.write_text(task_md.read_text(encoding="utf-8").replace("priority: p2", "priority: urgent"), encoding="utf-8")
 
-    TaskService(root).update_task("edited-body", section_values={"Summary": "- new"})
+    listed = runner.invoke(app, ["list", "--tasks-root", str(root)])
+    tagged = runner.invoke(app, ["update", "old-task", "--tag", "x", "--tasks-root", str(root)])
 
-    _, body = _read_task_md(task_md)
-    assert body == "\nIntro line.\n\n## Summary\n- new\n\n## Outcome\n- shipped\n\n## Notes\n- keep me\n"
+    warning = "Warning: old-task: priority: 'urgent' is not one of p0, p1, p2, p3"
+    assert listed.exit_code == 0 and listed.output.count(warning) == 1
+    assert tagged.exit_code == 0
+    meta, _ = _read_task_md(task_md)
+    assert meta["priority"] == "urgent" and meta["tags"] == ["x"]
 
 
-def test_update_sections_appends_configured_section_missing_from_body(tmp_path: Path) -> None:
-    # Purpose: a configured section absent from the body (e.g. added to config later) is
-    # appended at the end when the form supplies it.
-    from dot_tasks.service import TaskService
-
+def test_hand_added_frontmatter_keys_survive_updates(tmp_path: Path) -> None:
+    # Purpose: unknown frontmatter keys added by hand are kept verbatim and in place when a
+    # command rewrites the task.
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "short-body", "--summary", "s", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "custom", "--tasks-root", str(root)])
+    task_md = _task_md_path(root, "todo", "custom")
+    # The first "\n---\n" is the closing frontmatter delimiter.
+    text = task_md.read_text(encoding="utf-8").replace("\n---\n", "\nvenue: NeurIPS\n---\n", 1)
+    task_md.write_text(text, encoding="utf-8")
 
-    TaskService(root).update_task(
-        "short-body",
-        section_values={"Summary": "- s", "Outcome": "- done"},
-    )
+    result = runner.invoke(app, ["update", "custom", "priority=p0", "--tasks-root", str(root)])
 
-    _, body = _read_task_md(_task_md_path(root, "todo", "short-body"))
-    assert body.endswith("## Summary\n- s\n\n## Outcome\n- done\n")
+    assert result.exit_code == 0
+    meta, _ = _read_task_md(task_md)
+    assert meta["venue"] == "NeurIPS" and meta["priority"] == "p0"

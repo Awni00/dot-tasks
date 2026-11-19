@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict
 import datetime as dt
 import json
 from pathlib import Path
 from typing import Iterable
 
-from .models import DependencyGraph, Task
+from .models import DependencyGraph, FieldDef, Task
 
 
 STATUS_ORDER = ("todo", "doing", "completed")
@@ -33,13 +32,18 @@ def _health_label(unmet_count: int) -> str:
     return f"blocked({unmet_count})"
 
 
-def _priority_style(priority: str) -> str:
-    return {
-        "p0": "bold red",
-        "p1": "bold yellow",
-        "p2": "cyan",
-        "p3": "dim",
-    }.get(priority, "white")
+# Styles for the first values of a ranked choice field (e.g. priority p0, p1, p2, p3).
+_RANKED_STYLES = ("bold red", "bold yellow", "cyan")
+
+
+def _choice_style(field_def: FieldDef, value: object) -> str:
+    """Ranked choices are coloured by position; the last value is dimmed."""
+    if not field_def.ranked or value not in field_def.values:
+        return ""
+    index = field_def.values.index(value)
+    if index == len(field_def.values) - 1 and index > 0:
+        return "dim"
+    return _RANKED_STYLES[index] if index < len(_RANKED_STYLES) else ""
 
 
 def _status_style(status: str) -> str:
@@ -56,19 +60,23 @@ def _deps_rich_label(unmet_count: int) -> tuple[str, str]:
     return f"⚠ blocked({unmet_count})", "yellow"
 
 
-def _task_list_row(task: Task, unmet_count: int) -> dict[str, str]:
-    return {
+def _display(value: object) -> str:
+    return "-" if value is None or value == "" else str(value)
+
+
+def _task_list_row(task: Task, unmet_count: int, field_defs: list[FieldDef]) -> dict[str, str]:
+    row = {
         "task_name": task.metadata.task_name,
         "task_id": task.metadata.task_id,
         "status": task.metadata.status,
-        "priority": task.metadata.priority,
-        "effort": task.metadata.effort,
-        "spec_readiness": task.metadata.spec_readiness,
+        "summary": _display(task.metadata.summary),
         "deps": _health_label(unmet_count),
-        "due_date": task.metadata.due_date or "-",
         "created": task.metadata.date_created,
         "completed": task.metadata.date_completed or "-",
     }
+    for field_def in field_defs:
+        row[field_def.name] = _display(task.metadata.fields.get(field_def.name))
+    return row
 
 
 def _truncate(value: str, width: int) -> str:
@@ -85,10 +93,12 @@ def render_task_list_plain(
     tasks: Iterable[Task],
     unmet_counts: dict[str, int],
     columns: list[dict[str, int | str]],
+    field_defs: list[FieldDef] | None = None,
 ) -> str:
+    field_defs = field_defs or []
     rows = []
     for task in tasks:
-        rows.append(_task_list_row(task, unmet_counts.get(task.metadata.task_id, 0)))
+        rows.append(_task_list_row(task, unmet_counts.get(task.metadata.task_id, 0), field_defs))
 
     headers = [_column_name(column) for column in columns]
     if not rows:
@@ -117,35 +127,35 @@ def _column_style(name: str) -> str:
     return ""
 
 
-def _open_due_date(task: Task) -> dt.date | None:
-    """Return the due date of a todo/doing task, or None (no date, done, or unparseable)."""
-    if task.metadata.status not in {"todo", "doing"} or not task.metadata.due_date:
+def _open_date(task: Task, value: object) -> dt.date | None:
+    """Parse a date value of a todo/doing task; None if done, unset or unparseable."""
+    if task.metadata.status not in {"todo", "doing"} or not isinstance(value, str) or not value:
         return None
     try:
-        return dt.date.fromisoformat(task.metadata.due_date)
+        return dt.date.fromisoformat(value)
     except ValueError:
         return None
 
 
-def is_overdue(task: Task, *, today: dt.date | None = None) -> bool:
-    due_date = _open_due_date(task)
-    return due_date is not None and due_date < (today or dt.date.today())
-
-
-def is_due_today(task: Task, *, today: dt.date | None = None) -> bool:
-    due_date = _open_due_date(task)
-    return due_date is not None and due_date == (today or dt.date.today())
-
-
-def _due_date_highlight_style(task: Task, *, today: dt.date | None = None) -> str:
-    due_date = _open_due_date(task)
-    if due_date is None:
+def date_highlight_style(task: Task, value: object, *, today: dt.date | None = None) -> str:
+    """Past dates on open tasks are red, today's are orange (any date field)."""
+    date_value = _open_date(task, value)
+    if date_value is None:
         return ""
     today = today or dt.date.today()
-    if due_date < today:
+    if date_value < today:
         return "bold red"
-    if due_date == today:
+    if date_value == today:
         return "bold orange3"
+    return ""
+
+
+def _field_style(task: Task, field_def: FieldDef, *, today: dt.date | None = None) -> str:
+    value = task.metadata.fields.get(field_def.name)
+    if field_def.type == "choice":
+        return _choice_style(field_def, value)
+    if field_def.type == "date":
+        return date_highlight_style(task, value, today=today)
     return ""
 
 
@@ -153,6 +163,7 @@ def render_task_list_rich(
     tasks: Iterable[Task],
     unmet_counts: dict[str, int],
     columns: list[dict[str, int | str]],
+    field_defs: list[FieldDef] | None = None,
     *,
     today: dt.date | None = None,
 ):
@@ -172,12 +183,11 @@ def render_task_list_rich(
         else:
             by_status.setdefault(task.metadata.status, []).append(task)
 
-    renderables = []
-    apply_done_defaults = None
-    if columns:
-        from . import storage
+    from . import storage
 
-        apply_done_defaults = storage.apply_done_list_defaults
+    field_defs = field_defs or []
+    fields_by_name = {field_def.name: field_def for field_def in field_defs}
+    renderables = []
     for status in STATUS_ORDER:
         bucket = by_status.get(status) or []
         if not bucket:
@@ -190,8 +200,8 @@ def render_task_list_rich(
         renderables.append(section_title)
 
         bucket_columns = columns
-        if status == "completed" and apply_done_defaults is not None:
-            bucket_columns = apply_done_defaults(columns)
+        if status == "completed":
+            bucket_columns = storage.apply_done_list_defaults(columns, field_defs)
 
         table = Table(
             box=box.SIMPLE_HEAVY,
@@ -213,21 +223,22 @@ def render_task_list_rich(
 
         for task in bucket:
             unmet_count = unmet_counts.get(task.metadata.task_id, 0)
-            row = _task_list_row(task, unmet_count)
+            row = _task_list_row(task, unmet_count, field_defs)
             rendered: list[str | Text] = []
             for column in bucket_columns:
                 name = _column_name(column)
                 value = row[name]
                 if name == "status":
                     rendered.append(Text(value, style=_status_style(value)))
-                elif name == "priority":
-                    rendered.append(Text(value, style=_priority_style(value)))
                 elif name == "deps":
                     deps_label, deps_style = _deps_rich_label(unmet_count)
                     rendered.append(Text(deps_label, style=deps_style))
-                elif name == "due_date":
-                    due_style = _due_date_highlight_style(task, today=today)
-                    rendered.append(Text(value, style=due_style or "dim"))
+                elif name in fields_by_name:
+                    field_def = fields_by_name[name]
+                    style = _field_style(task, field_def, today=today)
+                    if not style and field_def.type == "date":
+                        style = "dim"
+                    rendered.append(Text(value, style=style))
                 else:
                     rendered.append(value)
             table.add_row(*rendered)
@@ -244,7 +255,7 @@ def render_task_list_rich(
 def render_task_list_json(tasks: Iterable[Task], unmet_counts: dict[str, int]) -> str:
     payload = []
     for task in tasks:
-        item = asdict(task.metadata)
+        item = task.metadata.to_dict()
         item["dependency_health"] = _health_label(unmet_counts.get(task.metadata.task_id, 0))
         item["path"] = str(task.task_dir)
         payload.append(item)
@@ -710,30 +721,47 @@ def _task_file_detail_lines_rich(task: Task):
     return [first_line, files_line]
 
 
+def _detail_field_groups(
+    field_defs: list[FieldDef],
+) -> tuple[list[FieldDef], list[FieldDef], list[FieldDef]]:
+    choices = [field_def for field_def in field_defs if field_def.type == "choice"]
+    texts = [field_def for field_def in field_defs if field_def.type == "text"]
+    dates = [field_def for field_def in field_defs if field_def.type == "date"]
+    return choices, texts, dates
+
+
 def render_task_detail_plain(
     task: Task,
     dependency_rows: list[tuple[str, str, str]],
-    blocked_by_rows: list[tuple[str, str, str]],
+    blocks_rows: list[tuple[str, str, str]],
     unmet_count: int,
+    field_defs: list[FieldDef] | None = None,
     *,
     enable_links: bool = True,
-    show_due_date: bool = False,
 ) -> str:
     meta = task.metadata
-    tags = ", ".join(meta.tags) if meta.tags else "-"
-    dates = (
-        f"created: {meta.date_created}    started: {meta.date_started or '-'}    "
-        f"completed: {meta.date_completed or '-'}"
+    choices, texts, dates = _detail_field_groups(field_defs or [])
+    chips = [f"[{meta.status}]"]
+    chips.extend(
+        f"[{meta.fields[f.name]}]" for f in choices if meta.fields.get(f.name) is not None
     )
-    if show_due_date:
-        dates += f"    due_date: {meta.due_date or '-'}"
+    chips.append(f"[deps: {_health_label(unmet_count)}]")
+    tags = ", ".join(meta.tags) if meta.tags else "-"
+    people = [f"{f.name}: {_display(meta.fields.get(f.name))}" for f in texts]
+    date_parts = [
+        f"created: {meta.date_created}",
+        f"started: {meta.date_started or '-'}",
+        f"completed: {meta.date_completed or '-'}",
+        *(f"{f.name}: {_display(meta.fields.get(f.name))}" for f in dates),
+    ]
     lines = [
         f"{meta.task_name} ({meta.task_id})",
-        f"[{meta.status}] [{meta.priority}] [{meta.effort}] [deps: {_health_label(unmet_count)}]",
-        f"owner: {meta.owner or '-'}    tags: {tags}",
-        dates,
+        " ".join(chips),
+        f"summary: {_display(meta.summary)}",
+        "    ".join([*people, f"tags: {tags}"]),
+        "    ".join(date_parts),
         f"depends_on: {_inline_dependency_rows(dependency_rows)}",
-        f"blocked_by: {_inline_dependency_rows(blocked_by_rows)}",
+        f"blocks: {_inline_dependency_rows(blocks_rows)}",
         *_task_file_detail_lines_plain(task, enable_links=enable_links),
         "",
         _normalized_task_body(task.body),
@@ -744,16 +772,17 @@ def render_task_detail_plain(
 def render_task_detail_rich(
     task: Task,
     dependency_rows: list[tuple[str, str, str]],
-    blocked_by_rows: list[tuple[str, str, str]],
+    blocks_rows: list[tuple[str, str, str]],
     unmet_count: int,
+    field_defs: list[FieldDef] | None = None,
     *,
-    show_due_date: bool = False,
     today: dt.date | None = None,
 ):
     from rich.console import Group
     from rich.text import Text
 
     meta = task.metadata
+    choices, texts, dates = _detail_field_groups(field_defs or [])
     deps_label = _health_label(unmet_count)
     deps_style = "green" if unmet_count <= 0 else "yellow"
 
@@ -763,37 +792,45 @@ def render_task_detail_rich(
 
     chips = Text()
     chips.append(f"[{meta.status}]", style=_status_style(meta.status))
-    chips.append(" ")
-    chips.append(f"[{meta.priority}]", style=_priority_style(meta.priority))
-    chips.append(" ")
-    chips.append(f"[{meta.effort}]")
+    for field_def in choices:
+        value = meta.fields.get(field_def.name)
+        if value is None:
+            continue
+        chips.append(" ")
+        chips.append(f"[{value}]", style=_choice_style(field_def, value))
     chips.append(" ")
     chips.append("[deps: ")
     chips.append(deps_label, style=deps_style)
     chips.append("]")
 
+    summary_line = Text(f"summary: {_display(meta.summary)}")
     tags = ", ".join(meta.tags) if meta.tags else "-"
-    owner_line = Text(f"owner: {meta.owner or '-'}    tags: {tags}")
+    people_line = Text(
+        "    ".join(
+            [*(f"{f.name}: {_display(meta.fields.get(f.name))}" for f in texts), f"tags: {tags}"]
+        )
+    )
     dates_line = Text(
         f"created: {meta.date_created}    started: {meta.date_started or '-'}    "
         f"completed: {meta.date_completed or '-'}"
     )
-    if show_due_date:
-        dates_line.append("    due_date: ")
-        due_style = _due_date_highlight_style(task, today=today)
-        dates_line.append(meta.due_date or "-", style=due_style)
+    for field_def in dates:
+        value = meta.fields.get(field_def.name)
+        dates_line.append(f"    {field_def.name}: ")
+        dates_line.append(_display(value), style=date_highlight_style(task, value, today=today))
     depends_line = Text(f"depends_on: {_inline_dependency_rows(dependency_rows)}")
-    blocked_line = Text(f"blocked_by: {_inline_dependency_rows(blocked_by_rows)}")
+    blocks_line = Text(f"blocks: {_inline_dependency_rows(blocks_rows)}")
     file_lines = _task_file_detail_lines_rich(task)
 
     body_text = Text(_normalized_task_body(task.body))
     return Group(
         title,
         chips,
-        owner_line,
+        summary_line,
+        people_line,
         dates_line,
         depends_line,
-        blocked_line,
+        blocks_line,
         *file_lines,
         Text(""),
         body_text,
@@ -801,35 +838,29 @@ def render_task_detail_rich(
 
 
 def render_create_success_plain(task: Task, *, enable_links: bool = True) -> str:
-    task_dir = task.task_dir.resolve()
+    # The absolute task.md path is printed so humans and agents can open it in an editor.
     task_md = task.task_md_path.resolve()
-    dir_text = _plain_link(task_dir, "dir") if enable_links else "dir"
-    task_md_text = _plain_link(task_md, "task.md") if enable_links else "task.md"
-    lines = [
-        f"Created: {task.metadata.task_name} ({task.metadata.task_id})",
-        f"links: {dir_text} | {task_md_text}",
-    ]
-    return "\n".join(lines)
+    path_text = _plain_link(task_md, str(task_md)) if enable_links else str(task_md)
+    return "\n".join(
+        [
+            f"Created: {task.metadata.task_name} ({task.metadata.task_id})",
+            path_text,
+        ]
+    )
 
 
 def render_create_success_rich(task: Task):
     from rich.console import Group
     from rich.text import Text
 
-    task_dir = task.task_dir.resolve()
     task_md = task.task_md_path.resolve()
-
     created_line = Text(f"Created: {task.metadata.task_name} ({task.metadata.task_id})")
-    links_line = Text("links: ")
-    links_line.append_text(_rich_link(task_dir, "dir"))
-    links_line.append(" | ")
-    links_line.append_text(_rich_link(task_md, "task.md"))
-    return Group(created_line, links_line)
+    return Group(created_line, _rich_link(task_md, str(task_md)))
 
 
 def render_task_detail_json(task: Task, dependency_rows: list[tuple[str, str, str]]) -> str:
     payload = {
-        "metadata": asdict(task.metadata),
+        "metadata": task.metadata.to_dict(),
         "dependencies": [
             {"task_name": task_name, "task_id": task_id, "status": status}
             for task_name, task_id, status in dependency_rows

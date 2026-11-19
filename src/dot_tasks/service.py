@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 import datetime as dt
-import re
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from .models import (
     DependencyGraph,
     DependencyGraphNode,
+    FIELD_NAME_RE,
+    STRUCTURAL_KEYS,
     TASK_NAME_RE,
-    VALID_EFFORTS,
-    VALID_PRIORITIES,
-    VALID_SPEC_READINESS,
     VALID_STATUSES,
+    FieldDef,
     Task,
     TaskConflictError,
     TaskMetadata,
@@ -66,104 +65,50 @@ def _task_order_key(task: Task) -> tuple[int, int, str]:
     )
 
 
-def _render_task_body(
-    sections: list[dict[str, str]],
-    summary: str = "",
-    section_values: dict[str, str] | None = None,
-) -> str:
-    """Build the task.md body from configured sections.
-
-    *section_values* is a mapping of ``section name → content`` that takes
-    precedence over defaults.  For backward compatibility the *summary*
-    parameter populates the ``Summary`` section when *section_values* is
-    not provided.
-    """
-    values = dict(section_values) if section_values else {}
-    # Legacy: if summary is provided and no explicit section_values for Summary
-    summary_text = summary.strip()
-    if summary_text and "Summary" not in values:
-        values["Summary"] = f"- {summary_text}"
-
-    parts: list[str] = []
-    for section in sections:
-        name = section["name"]
-        default_content = section.get("default", "- TODO")
-        content = values.get(name, default_content)
-        parts.append(f"## {name}\n{content}\n")
-    return "\n".join(parts)
-
-
-def _parse_body_sections(body: str) -> dict[str, str]:
-    """Extract ``{section_name: content}`` from an existing task.md body."""
-    import re
-
-    result: dict[str, str] = {}
-    parts = re.split(r"^## ", body, flags=re.MULTILINE)
-    for part in parts:
-        if not part.strip():
-            continue
-        lines = part.split("\n", 1)
-        name = lines[0].strip()
-        content = lines[1].strip() if len(lines) > 1 else ""
-        if name:
-            result[name] = content
-    return result
-
-
-_SECTION_HEADING_RE = re.compile(r"^## (.+)$", re.MULTILINE)
-
-
-def _replace_body_sections(
-    body: str,
-    sections: list[dict[str, str]],
-    section_values: dict[str, str],
-) -> str:
-    """Replace the content of the named ``## `` sections in *body*, keeping everything else.
-
-    Text before the first heading, sections not named in *section_values* (including ones
-    added by hand) and their order are preserved verbatim. Named sections missing from the
-    body are appended in configured order.
-    """
-    headings = list(_SECTION_HEADING_RE.finditer(body))
-    preamble = body[: headings[0].start()] if headings else body
-    blocks: list[tuple[str, str]] = []
-    for index, match in enumerate(headings):
-        end = headings[index + 1].start() if index + 1 < len(headings) else len(body)
-        blocks.append((match.group(1).strip(), body[match.start() : end]))
-
-    remaining = dict(section_values)
-    parts: list[str] = [preamble]
-    for index, (name, text) in enumerate(blocks):
-        if name not in remaining:
-            parts.append(text)
-            continue
-        separator = "\n" if index + 1 < len(blocks) else ""
-        parts.append(f"## {name}\n{remaining.pop(name).strip()}\n{separator}")
-
-    if remaining:
-        configured = [section["name"] for section in sections]
-        ordered = [name for name in configured if name in remaining]
-        ordered += [name for name in remaining if name not in configured]
-        appended = "\n".join(f"## {name}\n{remaining[name].strip()}\n" for name in ordered)
-        current = "".join(parts).rstrip("\n")
-        parts = [f"{current}\n\n{appended}" if current else appended]
-    return "".join(parts)
-
-
 def _today() -> str:
     return dt.date.today().isoformat()
 
 
-def normalize_due_date(value: str | None) -> str | None:
+def parse_assignments(tokens: Iterable[str]) -> dict[str, str | None]:
+    """Parse ``key=value`` tokens; ``key=`` means "clear". Later tokens win."""
+    values: dict[str, str | None] = {}
+    for token in tokens:
+        key, sep, value = token.partition("=")
+        key = key.strip()
+        if not sep or not key:
+            raise TaskValidationError(f"Expected key=value, got '{token}'")
+        if not FIELD_NAME_RE.fullmatch(key):
+            raise TaskValidationError(f"Invalid field name '{key}'")
+        values[key] = value if value.strip() else None
+    return values
+
+
+def parse_filters(tokens: Iterable[str]) -> dict[str, list[str | None]]:
+    """Parse ``key=value`` list filters; repeating a key accepts any of its values."""
+    filters: dict[str, list[str | None]] = {}
+    for token in tokens:
+        key, value = next(iter(parse_assignments([token]).items()))
+        filters.setdefault(key, []).append(value)
+    return filters
+
+
+def check_field_value(field_def: FieldDef, value: object) -> str | None:
+    """Return the normalized value, or raise ValueError with a reason."""
     if value is None:
         return None
-    cleaned = value.strip()
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", cleaned):
-        raise TaskValidationError("due_date must use YYYY-MM-DD format")
-    try:
-        return dt.date.fromisoformat(cleaned).isoformat()
-    except ValueError as exc:
-        raise TaskValidationError(f"Invalid due_date: {value}") from exc
+    if field_def.type == "choice":
+        text = str(value)
+        if text not in field_def.values:
+            raise ValueError(f"'{text}' is not one of {', '.join(field_def.values)}")
+        return text
+    if field_def.type == "date":
+        try:
+            return storage.normalize_date(str(value))
+        except ValueError:
+            raise ValueError(f"'{value}' is not a YYYY-MM-DD date") from None
+    if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+        raise ValueError(f"expected text, got {type(value).__name__}")
+    return str(value)
 
 
 def _normalize_tags(tags: Iterable[str] | None) -> list[str]:
@@ -173,8 +118,63 @@ def _normalize_tags(tags: Iterable[str] | None) -> list[str]:
 
 
 class TaskService:
-    def __init__(self, tasks_root: Path) -> None:
+    def __init__(
+        self,
+        tasks_root: Path,
+        *,
+        warn: Callable[[str], None] | None = None,
+    ) -> None:
         self.tasks_root = tasks_root.resolve()
+        self.warn = warn
+        self._field_defs: list[FieldDef] | None = None
+
+    @property
+    def field_defs(self) -> list[FieldDef]:
+        """Fields configured in settings.fields (read once per service)."""
+        if self._field_defs is None:
+            self._field_defs = storage.resolve_fields(self.tasks_root, self.warn)
+        return self._field_defs
+
+    def field_def(self, name: str) -> FieldDef | None:
+        return next((field_def for field_def in self.field_defs if field_def.name == name), None)
+
+    def _warn_invalid_field_values(self, tasks: Iterable[Task]) -> None:
+        """Report stored values that do not fit their configured field; never fail."""
+        if self.warn is None:
+            return
+        for task in tasks:
+            for field_def in self.field_defs:
+                value = task.metadata.fields.get(field_def.name)
+                try:
+                    check_field_value(field_def, value)
+                except ValueError as exc:
+                    self.warn(f"{task.metadata.task_name}: {field_def.name}: {exc}")
+
+    def _set_field_values(self, meta: TaskMetadata, values: dict[str, str | None]) -> None:
+        """Apply key=value assignments to *meta*, validating against configured fields."""
+        for key, value in values.items():
+            if key == "summary":
+                meta.summary = (value or "").strip()
+                continue
+            if key in STRUCTURAL_KEYS:
+                hint = {
+                    "tags": "use --tag",
+                    "depends_on": "use --depends-on",
+                    "status": "use start/complete or update --status",
+                    "task_name": "use rename",
+                }.get(key, "it is managed by dot-tasks")
+                raise TaskValidationError(f"Cannot set '{key}' with key=value: {hint}")
+            field_def = self.field_def(key)
+            if field_def is None:
+                configured = ", ".join(["summary", *(f.name for f in self.field_defs)])
+                raise TaskValidationError(
+                    f"Unknown field '{key}'. Configured fields: {configured} "
+                    "(add fields in settings.fields of .tasks/config.yaml)"
+                )
+            try:
+                meta.fields[key] = check_field_value(field_def, value)
+            except ValueError as exc:
+                raise TaskValidationError(f"Invalid {key}: {exc}") from None
 
     @staticmethod
     def validate_task_name(task_name: str) -> None:
@@ -191,7 +191,17 @@ class TaskService:
         storage.ensure_layout(self.tasks_root)
 
     def _load(self, include_trash: bool = False) -> list[Task]:
-        return storage.load_tasks(self.tasks_root, include_trash=include_trash)
+        tasks = storage.load_tasks(self.tasks_root, include_trash=include_trash)
+        # `blocks` is derived: the tasks whose depends_on names this task.
+        blocks: dict[str, list[str]] = {task.metadata.task_id: [] for task in tasks}
+        for task in tasks:
+            for dep_id in task.metadata.depends_on:
+                if dep_id in blocks:
+                    blocks[dep_id].append(task.metadata.task_id)
+        for task in tasks:
+            task.metadata.blocks = sorted(blocks[task.metadata.task_id])
+        self._warn_invalid_field_values(tasks)
+        return tasks
 
     def _all_active(self) -> list[Task]:
         return self._load(include_trash=False)
@@ -244,20 +254,6 @@ class TaskService:
             names.add(task.metadata.task_name)
             if task.metadata.status not in VALID_STATUSES:
                 raise TaskValidationError(f"Invalid status for {task.metadata.task_name}")
-            if task.metadata.priority not in VALID_PRIORITIES:
-                raise TaskValidationError(f"Invalid priority for {task.metadata.task_name}")
-            if task.metadata.effort not in VALID_EFFORTS:
-                raise TaskValidationError(f"Invalid effort for {task.metadata.task_name}")
-            if task.metadata.spec_readiness not in VALID_SPEC_READINESS:
-                raise TaskValidationError(
-                    f"Invalid spec_readiness for {task.metadata.task_name}"
-                )
-            try:
-                task.metadata.due_date = normalize_due_date(task.metadata.due_date)
-            except TaskValidationError as exc:
-                raise TaskValidationError(
-                    f"Invalid due_date for {task.metadata.task_name}: {task.metadata.due_date}"
-                ) from exc
 
         graph: dict[str, list[str]] = {}
         for task in tasks:
@@ -292,13 +288,14 @@ class TaskService:
         for node in graph:
             dfs(node, [])
 
-        blocked_by: dict[str, list[str]] = {task_id: [] for task_id in graph}
+        # `blocks` (tasks that depend on this one) is derived, never stored.
+        blocks: dict[str, list[str]] = {task_id: [] for task_id in graph}
         for task_id, deps in graph.items():
             for dep in deps:
-                blocked_by[dep].append(task_id)
+                blocks[dep].append(task_id)
 
         for task in tasks:
-            task.metadata.blocked_by = sorted(blocked_by[task.metadata.task_id])
+            task.metadata.blocks = sorted(blocks[task.metadata.task_id])
 
     def check_circular_dependencies(self, task_id: str | None, extra_depends_on: list[str]) -> None:
         """Validate if adding extra_depends_on creates a cycle."""
@@ -381,11 +378,16 @@ class TaskService:
         exclude_tags: Iterable[str] | None = None,
         require_all_tags: bool = False,
         untagged_only: bool = False,
+        field_filters: dict[str, list[str | None]] | None = None,
     ) -> list[Task]:
+        filters = self._normalize_field_filters(field_filters or {})
         tasks = self._load(include_trash=include_trash)
         status_filter = _parse_status_filter(status)
         if status_filter is not None:
             tasks = [task for task in tasks if task.metadata.status in status_filter]
+        for key, accepted in filters.items():
+            # Same key repeated: any of its values; different keys: all must match.
+            tasks = [task for task in tasks if task.metadata.fields.get(key) in accepted]
 
         include_tag_set = set(_normalize_tags(include_tags))
         exclude_tag_set = set(_normalize_tags(exclude_tags))
@@ -407,6 +409,27 @@ class TaskService:
             tasks = filtered
 
         return sorted(tasks, key=_task_order_key)
+
+    def _normalize_field_filters(
+        self,
+        filters: dict[str, list[str | None]],
+    ) -> dict[str, list[str | None]]:
+        normalized: dict[str, list[str | None]] = {}
+        for key, values in filters.items():
+            field_def = self.field_def(key)
+            if field_def is None:
+                configured = ", ".join(f.name for f in self.field_defs) or "(none)"
+                raise TaskValidationError(
+                    f"Cannot filter on '{key}': not a configured field. Configured fields: {configured}"
+                )
+            accepted: list[str | None] = []
+            for value in values:
+                try:
+                    accepted.append(check_field_value(field_def, value))
+                except ValueError as exc:
+                    raise TaskValidationError(f"Invalid filter {key}: {exc}") from None
+            normalized[key] = accepted
+        return normalized
 
     def tag_counts(
         self,
@@ -498,8 +521,6 @@ class TaskService:
                 task_id=task_id,
                 task_name=task.metadata.task_name,
                 status=task.metadata.status,
-                priority=task.metadata.priority,
-                effort=task.metadata.effort,
                 depends_on=scoped_deps,
                 hidden_depends_on=hidden_deps,
             )
@@ -546,47 +567,29 @@ class TaskService:
         self,
         task_name: str,
         *,
-        summary: str = "",
-        priority: str = "p2",
-        effort: str = "m",
-        spec_readiness: str = "unspecified",
-        owner: str | None = None,
+        field_values: dict[str, str | None] | None = None,
         tags: Iterable[str] | None = None,
         depends_on: Iterable[str] | None = None,
-        due_date: str | None = None,
-        section_values: dict[str, str] | None = None,
     ) -> Task:
+        """Create a todo task. *field_values* holds key=value assignments (incl. summary)."""
         self.validate_task_name(task_name)
-        if priority not in VALID_PRIORITIES:
-            raise TaskValidationError(f"Invalid priority: {priority}")
-        if effort not in VALID_EFFORTS:
-            raise TaskValidationError(f"Invalid effort: {effort}")
-        if spec_readiness not in VALID_SPEC_READINESS:
-            raise TaskValidationError(f"Invalid spec_readiness: {spec_readiness}")
-
         self._ensure_unique_task_name(task_name)
         today = _today()
         task_id = storage.next_task_id(self.tasks_root, today)
         dep_ids = self._resolve_dependency_refs(depends_on or [])
-        normalized_due_date = normalize_due_date(due_date)
-
-        sections = storage.resolve_task_body_sections(self.tasks_root)
-        body = _render_task_body(sections, summary, section_values=section_values)
 
         meta = TaskMetadata(
             task_id=task_id,
             task_name=task_name,
             status="todo",
             date_created=today,
-            due_date=normalized_due_date,
-            priority=priority,
-            effort=effort,
-            spec_readiness=spec_readiness,
-            owner=owner,
             depends_on=dep_ids,
-            blocked_by=[],
             tags=_normalize_tags(tags),
+            # Every configured field is written, in config order, with its default.
+            fields={field_def.name: field_def.default for field_def in self.field_defs},
         )
+        self._set_field_values(meta, field_values or {})
+        body = storage.read_task_template(self.tasks_root)
         task_dir = storage.task_dir_path(self.tasks_root, "todo", today, task_name)
         task = Task(metadata=meta, body=body, task_dir=task_dir)
 
@@ -648,60 +651,34 @@ class TaskService:
         selector: str,
         *,
         status: str | None = None,
-        priority: str | None = None,
-        effort: str | None = None,
-        spec_readiness: str | None = None,
-        owner: str | None = None,
+        field_values: dict[str, str | None] | None = None,
         tags: Iterable[str] | None = None,
         replace_tags: bool = False,
         depends_on: Iterable[str] | None = None,
         clear_depends_on: bool = False,
-        due_date: str | None = None,
-        clear_due_date: bool = False,
-        section_values: dict[str, str] | None = None,
     ) -> Task:
+        """Update frontmatter. *field_values* holds key=value assignments (incl. summary)."""
         task = self._find_by_selector(selector, include_trash=False)
-        if due_date is not None and clear_due_date:
-            raise TaskValidationError("Cannot use due_date and clear_due_date together")
-        normalized_due_date = normalize_due_date(due_date)
+        if status is not None and status not in VALID_STATUSES:
+            raise TaskValidationError(f"Invalid status: {status}")
+        # Validate assignments before anything moves on disk.
+        self._set_field_values(task.metadata, field_values or {})
 
-        if status is not None:
-            if status not in VALID_STATUSES:
-                raise TaskValidationError(f"Invalid status: {status}")
-            if status != task.metadata.status:
-                storage.move_task_dir(task, self.tasks_root, status)
-                task.metadata.status = status
-                if status == "todo":
-                    task.metadata.date_started = None
-                    task.metadata.date_completed = None
-                elif status == "doing":
-                    if not task.metadata.date_started:
-                        task.metadata.date_started = _today()
-                    task.metadata.date_completed = None
-                elif status == "completed":
-                    if not task.metadata.date_started:
-                        task.metadata.date_started = task.metadata.date_created
-                    if not task.metadata.date_completed:
-                        task.metadata.date_completed = _today()
-
-        if priority is not None:
-            if priority not in VALID_PRIORITIES:
-                raise TaskValidationError(f"Invalid priority: {priority}")
-            task.metadata.priority = priority
-        if effort is not None:
-            if effort not in VALID_EFFORTS:
-                raise TaskValidationError(f"Invalid effort: {effort}")
-            task.metadata.effort = effort
-        if spec_readiness is not None:
-            if spec_readiness not in VALID_SPEC_READINESS:
-                raise TaskValidationError(f"Invalid spec_readiness: {spec_readiness}")
-            task.metadata.spec_readiness = spec_readiness
-        if owner is not None:
-            task.metadata.owner = owner or None
-        if due_date is not None:
-            task.metadata.due_date = normalized_due_date
-        elif clear_due_date:
-            task.metadata.due_date = None
+        if status is not None and status != task.metadata.status:
+            storage.move_task_dir(task, self.tasks_root, status)
+            task.metadata.status = status
+            if status == "todo":
+                task.metadata.date_started = None
+                task.metadata.date_completed = None
+            elif status == "doing":
+                if not task.metadata.date_started:
+                    task.metadata.date_started = _today()
+                task.metadata.date_completed = None
+            elif status == "completed":
+                if not task.metadata.date_started:
+                    task.metadata.date_started = task.metadata.date_created
+                if not task.metadata.date_completed:
+                    task.metadata.date_completed = _today()
 
         if replace_tags:
             task.metadata.tags = _normalize_tags(tags)
@@ -713,10 +690,6 @@ class TaskService:
         if depends_on:
             dep_ids = self._resolve_dependency_refs(depends_on)
             task.metadata.depends_on = sorted(set([*task.metadata.depends_on, *dep_ids]))
-
-        if section_values:
-            sections = storage.resolve_task_body_sections(self.tasks_root)
-            task.body = _replace_body_sections(task.body, sections, section_values)
 
         snapshot = self._snapshot_with(task)
         self._validate_and_persist_snapshot(snapshot)
@@ -731,7 +704,7 @@ class TaskService:
         storage.move_task_dir(task, self.tasks_root, task.metadata.status, target_name=new_task_name)
         storage.write_task(task)
 
-        # Cross-task consistency pass: validates graph and recomputes blocked_by indexes.
+        # Cross-task consistency pass: validates the dependency graph.
         self._validate_and_persist_all()
         return self._find_by_selector(task.metadata.task_id)
 
@@ -758,10 +731,11 @@ class TaskService:
             rows.append((dep.metadata.task_name, dep.metadata.task_id, dep.metadata.status))
         return rows
 
-    def blocked_by_rows(self, task: Task) -> list[tuple[str, str, str]]:
+    def blocks_rows(self, task: Task) -> list[tuple[str, str, str]]:
+        """Tasks that depend on *task*, as (task_name, task_id, status)."""
         by_id = self._by_id(include_trash=False)
         rows: list[tuple[str, str, str]] = []
-        for blocked_id in task.metadata.blocked_by:
+        for blocked_id in task.metadata.blocks:
             blocked = by_id.get(blocked_id)
             if blocked is None:
                 rows.append(("missing", blocked_id, "unknown"))

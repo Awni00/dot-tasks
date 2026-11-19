@@ -13,8 +13,3 @@ settings:
       width: 10
     - name: deps
       width: 12
-  task_body_sections:
-  - name: Summary
-    default: '- TODO'
-  - name: Acceptance Criteria
-    default: '- TODO'

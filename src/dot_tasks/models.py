@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 import re
 
 VALID_STATUSES = ("todo", "doing", "completed")
-VALID_PRIORITIES = ("p0", "p1", "p2", "p3")
-VALID_EFFORTS = ("s", "m", "l", "xl")
-VALID_SPEC_READINESS = ("unspecified", "rough", "ready", "autonomous")
 TASK_NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+FIELD_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+FIELD_TYPES = ("choice", "date", "text")
 
 STATUS_TO_DIR = {
     "todo": "todo",
@@ -19,6 +18,39 @@ STATUS_TO_DIR = {
     "completed": "done",
 }
 DIR_TO_STATUS = {value: key for key, value in STATUS_TO_DIR.items()}
+
+# Frontmatter keys the tool attaches logic to, in the order they are written. Everything
+# else in the frontmatter (configured fields and custom keys) lives in TaskMetadata.fields.
+FIXED_KEYS = (
+    "task_id",
+    "task_name",
+    "summary",
+    "status",
+    "date_created",
+    "date_started",
+    "date_completed",
+    "depends_on",
+    "tags",
+)
+# Structural fields change only through dedicated commands, never via key=value.
+STRUCTURAL_KEYS = frozenset(FIXED_KEYS) - {"summary"}
+# Keys written by older versions that are no longer stored (dropped on rewrite).
+RETIRED_KEYS = frozenset({"blocked_by"})
+# Names that cannot be used for configured fields.
+RESERVED_FIELD_NAMES = frozenset(FIXED_KEYS) | RETIRED_KEYS | {"blocks"}
+
+
+@dataclass(frozen=True, slots=True)
+class FieldDef:
+    """A project-configured frontmatter field (see ``settings.fields``)."""
+
+    name: str
+    type: str
+    values: tuple[str, ...] = ()
+    default: str | None = None
+    # For choice fields: values are ordered from most to least important and the first
+    # ones are highlighted (used by the built-in ``priority``).
+    ranked: bool = False
 
 
 @dataclass(slots=True)
@@ -29,17 +61,27 @@ class TaskMetadata:
     date_created: str
     date_started: str | None = None
     date_completed: str | None = None
-    due_date: str | None = None
-    priority: str = "p2"
-    effort: str = "m"
-    spec_readiness: str = "unspecified"
+    summary: str = ""
     depends_on: list[str] = field(default_factory=list)
-    blocked_by: list[str] = field(default_factory=list)
-    owner: str | None = None
     tags: list[str] = field(default_factory=list)
+    # Configured field values and custom keys, in frontmatter order.
+    fields: dict[str, Any] = field(default_factory=dict)
+    # Tasks that depend on this one; computed on load, never stored.
+    blocks: list[str] = field(default_factory=list, compare=False)
+
+    def frontmatter(self) -> dict[str, Any]:
+        """Return the stored frontmatter: fixed keys in order, then other fields."""
+        data: dict[str, Any] = {key: getattr(self, key) for key in FIXED_KEYS}
+        for key, value in self.fields.items():
+            if key not in data:
+                data[key] = value
+        return data
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        """Frontmatter plus computed values, for JSON output."""
+        data = self.frontmatter()
+        data["blocks"] = list(self.blocks)
+        return data
 
 
 @dataclass(slots=True)
@@ -58,8 +100,6 @@ class DependencyGraphNode:
     task_id: str
     task_name: str
     status: str
-    priority: str
-    effort: str
     depends_on: list[str] = field(default_factory=list)
     hidden_depends_on: list[str] = field(default_factory=list)
 

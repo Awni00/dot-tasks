@@ -8,6 +8,11 @@ import yaml
 from dot_tasks import storage
 
 
+def _legacy_fields():
+    """Fields used by configs without settings.fields (all four built-ins)."""
+    return [storage.BUILTIN_FIELDS[name] for name in storage.DEFAULT_FIELD_NAMES]
+
+
 def _write_config(tasks_root: Path, content: str) -> None:
     tasks_root.mkdir(parents=True, exist_ok=True)
     (tasks_root / "config.yaml").write_text(content, encoding="utf-8")
@@ -17,67 +22,8 @@ def test_resolve_list_table_columns_uses_defaults_when_missing(tmp_path: Path) -
     root = tmp_path / ".tasks"
     warnings: list[str] = []
     columns = storage.resolve_list_table_columns(root, warn=warnings.append)
-    assert columns == storage.default_list_table_columns()
+    assert columns == storage.default_list_table_columns(_legacy_fields())
     assert warnings == []
-
-
-def test_resolve_due_date_settings_defaults_when_missing(tmp_path: Path) -> None:
-    # Purpose: without config, due dates are enabled by default.
-    settings = storage.resolve_due_date_settings(tmp_path / ".tasks")
-
-    assert settings.enabled is True
-
-
-def test_resolve_due_date_settings_reports_whether_section_is_configured(tmp_path: Path) -> None:
-    # Purpose: init needs to tell a legacy config (no `due_dates` section, enabled only by
-    # default) from one where the user explicitly enabled due dates.
-    root = tmp_path / ".tasks"
-    _write_config(root, "settings:\n  show_banner: true\n")
-    assert storage.resolve_due_date_settings(root).configured is False
-
-    _write_config(root, "settings:\n  due_dates:\n    enabled: true\n")
-    assert storage.resolve_due_date_settings(root).configured is True
-
-
-def test_resolve_due_date_settings_reads_valid_config(tmp_path: Path) -> None:
-    # Purpose: an explicit valid due_dates.enabled value is read.
-    root = tmp_path / ".tasks"
-    _write_config(
-        root,
-        (
-            "settings:\n"
-            "  due_dates:\n"
-            "    enabled: true\n"
-        ),
-    )
-
-    settings = storage.resolve_due_date_settings(root)
-
-    assert settings.enabled is True
-
-
-def test_resolve_due_date_settings_warns_and_defaults_invalid_values(tmp_path: Path) -> None:
-    # Purpose: invalid due_dates values and unknown keys warn and fall back to defaults.
-    root = tmp_path / ".tasks"
-    _write_config(
-        root,
-        (
-            "settings:\n"
-            "  due_dates:\n"
-            "    enabled: yes-please\n"
-            "    color_mode: red\n"
-        ),
-    )
-    warnings: list[str] = []
-
-    settings = storage.resolve_due_date_settings(root, warn=warnings.append)
-
-    assert settings == storage.DueDateSettings()
-    assert any("settings.due_dates.enabled" in warning for warning in warnings)
-    assert any(
-        "Unsupported settings.due_dates key 'color_mode'" in warning
-        for warning in warnings
-    )
 
 
 def test_resolve_list_table_columns_reads_valid_custom_columns(tmp_path: Path) -> None:
@@ -102,30 +48,21 @@ def test_resolve_list_table_columns_reads_valid_custom_columns(tmp_path: Path) -
     assert warnings == []
 
 
-def test_default_done_list_table_columns() -> None:
-    # Purpose: ensure done defaults include completed date and omit deps.
-    columns = storage.default_done_list_table_columns()
-    names = [column["name"] for column in columns]
+def test_done_list_defaults_swap_deps_for_completed() -> None:
+    # Purpose: for the default column set, done tasks show `completed` instead of `deps`.
+    field_defs = _legacy_fields()
+    columns = storage.apply_done_list_defaults(storage.default_list_table_columns(field_defs), field_defs)
+    names = storage.list_column_names(columns)
     assert "completed" in names
     assert "deps" not in names
-    assert len(names) == len(storage.default_list_column_names())
     completed_column = next(column for column in columns if column["name"] == "completed")
-    assert completed_column["width"] == storage.LIST_TABLE_COLUMN_DEFAULT_WIDTHS["completed"]
+    assert completed_column["width"] == storage.FIXED_LIST_COLUMN_WIDTHS["completed"]
 
 
-def test_done_list_defaults_work_when_due_dates_are_disabled() -> None:
-    # Purpose: the done-list column defaults still swap deps for completed when due dates are disabled.
-    columns = storage.apply_due_date_list_setting(
-        storage.default_list_table_columns(),
-        enabled=False,
-    )
-
-    updated = storage.apply_done_list_defaults(columns)
-    names = storage.list_column_names(updated)
-
-    assert "due_date" not in names
-    assert "deps" not in names
-    assert "completed" in names
+def test_done_list_defaults_leave_custom_columns_alone() -> None:
+    # Purpose: a project's own column choice is never rewritten for done tasks.
+    columns = [{"name": "task_name", "width": 20}, {"name": "deps", "width": 12}]
+    assert storage.apply_done_list_defaults(columns, _legacy_fields()) == columns
 
 
 def test_next_task_id_uses_date_prefix_and_suffix(
@@ -161,8 +98,8 @@ def test_resolve_list_table_columns_invalid_entries_warn_and_fallback(tmp_path: 
 
     warnings: list[str] = []
     columns = storage.resolve_list_table_columns(root, warn=warnings.append)
-    assert columns == storage.default_list_table_columns()
-    assert any("Unsupported list column 'not_real'" in message for message in warnings)
+    assert columns == storage.default_list_table_columns(_legacy_fields())
+    assert any("List column 'not_real'" in message for message in warnings)
     assert any("Invalid width for list column 'task_name'" in message for message in warnings)
     assert any("No valid settings.list_table.columns" in message for message in warnings)
 
@@ -200,27 +137,6 @@ def test_default_config_uses_provided_list_columns() -> None:
     assert payload["settings"]["interactive_enabled"] is False
     assert payload["settings"]["show_banner"] is False
     assert payload["settings"]["list_table"]["columns"] == [
-        {"name": "task_name", "width": 20},
-        {"name": "status", "width": 10},
-    ]
-
-
-def test_write_default_config_if_missing_writes_provided_list_columns(tmp_path: Path) -> None:
-    root = tmp_path / ".tasks"
-    root.mkdir(parents=True, exist_ok=True)
-
-    created = storage.write_default_config_if_missing(
-        root,
-        interactive_enabled=False,
-        show_banner=False,
-        list_columns=[{"name": "task_name", "width": 20}, {"name": "status", "width": 10}],
-    )
-    assert created is True
-
-    cfg = yaml.safe_load((root / "config.yaml").read_text(encoding="utf-8"))
-    assert cfg["settings"]["interactive_enabled"] is False
-    assert cfg["settings"]["show_banner"] is False
-    assert cfg["settings"]["list_table"]["columns"] == [
         {"name": "task_name", "width": 20},
         {"name": "status", "width": 10},
     ]
@@ -314,8 +230,10 @@ def test_resolve_show_banner_reads_valid_bool(tmp_path: Path) -> None:
     assert storage.resolve_show_banner(root) is False
 
 
-def test_parse_task_backfills_missing_optional_metadata(tmp_path: Path) -> None:
-    # Purpose: task.md files written before newer fields (e.g. due_date) existed still load, with defaults filled in.
+def test_parse_task_keeps_unknown_keys_and_drops_blocked_by(tmp_path: Path) -> None:
+    # Purpose: 0.1 task files load unchanged: old fields (including the deleted spec_readiness)
+    # become plain frontmatter fields kept verbatim and in order, unquoted dates become ISO
+    # strings, and the retired blocked_by key is dropped when the task is written back.
     task_dir = tmp_path / "todo" / "2026-02-24-legacy-task"
     task_dir.mkdir(parents=True, exist_ok=True)
     (task_dir / "task.md").write_text(
@@ -324,15 +242,17 @@ def test_parse_task_backfills_missing_optional_metadata(tmp_path: Path) -> None:
             "task_id: t-20260224-001\n"
             "task_name: legacy-task\n"
             "status: todo\n"
-            "date_created: '2026-02-24'\n"
+            "date_created: 2026-02-24\n"
             "date_started: null\n"
             "date_completed: null\n"
             "priority: p2\n"
             "effort: m\n"
+            "spec_readiness: ready\n"
             "depends_on: []\n"
-            "blocked_by: []\n"
+            "blocked_by: [t-20260225-002]\n"
             "owner: null\n"
             "tags: []\n"
+            "kind: theory\n"
             "---\n\n"
             "## Summary\n"
             "- legacy\n"
@@ -341,8 +261,93 @@ def test_parse_task_backfills_missing_optional_metadata(tmp_path: Path) -> None:
     )
 
     task = storage.parse_task(task_dir)
-    assert task.metadata.spec_readiness == "unspecified"
-    assert task.metadata.due_date is None
+    storage.write_task(task)
+    meta, _ = yaml.safe_load_all((task_dir / "task.md").read_text(encoding="utf-8")).__next__(), None
+
+    assert task.metadata.date_created == "2026-02-24"
+    assert task.metadata.summary == ""
+    assert list(task.metadata.fields) == ["priority", "effort", "spec_readiness", "owner", "kind"]
+    assert task.metadata.fields["spec_readiness"] == "ready"
+    assert "blocked_by" not in meta
+    assert meta["kind"] == "theory"
+    assert "## Summary\n- legacy" in (task_dir / "task.md").read_text(encoding="utf-8")
+
+
+def _field(raw, warnings=None):
+    parsed = storage.parse_field_entries([raw], warnings.append if warnings is not None else None)
+    return parsed[0] if parsed else None
+
+
+def test_resolve_fields_defaults_to_all_builtins_without_fields_key(tmp_path: Path) -> None:
+    # Purpose: configs without settings.fields keep every 0.1 field (priority, effort,
+    # due_date, owner); an explicit empty list means no optional fields.
+    root = tmp_path / ".tasks"
+    _write_config(root, "settings:\n  show_banner: true\n")
+    assert [f.name for f in storage.resolve_fields(root)] == list(storage.DEFAULT_FIELD_NAMES)
+
+    _write_config(root, "settings:\n  fields: []\n")
+    assert storage.resolve_fields(root) == []
+
+
+def test_parse_field_entries_builtins_overrides_and_custom_fields() -> None:
+    # Purpose: entries can name a built-in, override parts of a built-in, or define a new
+    # typed field (choice/date/text) with an optional default.
+    assert _field("priority") == storage.BUILTIN_FIELDS["priority"]
+    effort = _field({"name": "effort", "values": ["hours", "days"], "default": "days"})
+    assert (effort.type, effort.values, effort.default) == ("choice", ("hours", "days"), "days")
+    kind = _field({"name": "kind", "type": "choice", "values": ["theory", "writing"]})
+    assert (kind.type, kind.values, kind.default, kind.ranked) == ("choice", ("theory", "writing"), None, False)
+    review = _field({"name": "review_date", "type": "date", "default": "2026-12-01"})
+    assert (review.type, review.default) == ("date", "2026-12-01")
+    assert _field({"name": "venue", "type": "text"}).type == "text"
+
+
+def test_parse_field_entries_warns_and_skips_invalid_entries() -> None:
+    # Purpose: malformed field definitions never break commands; each is reported and skipped
+    # (or, for a bad default, kept without the default).
+    cases = {
+        "unknown_builtin": ("nope", "Unknown built-in field 'nope'"),
+        "missing_type": ({"name": "kind"}, "needs a type"),
+        "empty_values": ({"name": "kind", "type": "choice", "values": []}, "non-empty 'values'"),
+        "reserved": ({"name": "status", "type": "text"}, "reserved"),
+    }
+    for raw, expected in cases.values():
+        warnings: list[str] = []
+        assert _field(raw, warnings) is None
+        assert any(expected in message for message in warnings), (raw, warnings)
+
+    warnings = []
+    kind = _field({"name": "kind", "type": "choice", "values": ["a"], "default": "b"}, warnings)
+    assert kind is not None and kind.default is None
+    assert any("not one of its values" in message for message in warnings)
+
+    warnings = []
+    parsed = storage.parse_field_entries(["priority", "priority"], warnings.append)
+    assert [f.name for f in parsed] == ["priority"]
+    assert any("Duplicate field 'priority'" in message for message in warnings)
+
+
+def test_merge_managed_config_keeps_fields_and_drops_retired_settings() -> None:
+    # Purpose: re-running init keeps a project's settings.fields (custom fields included) unless
+    # new entries are given, and removes settings retired in 0.2.0.
+    custom = ["priority", {"name": "kind", "type": "choice", "values": ["a", "b"]}]
+    merged = storage.merge_managed_config(
+        {"settings": {"fields": custom, "due_dates": {"enabled": True}, "task_body_sections": []}},
+    )
+    assert merged["settings"]["fields"] == custom
+    assert "due_dates" not in merged["settings"]
+    assert "task_body_sections" not in merged["settings"]
+
+
+def test_read_task_template_is_optional(tmp_path: Path) -> None:
+    # Purpose: .tasks/templates/task.md is the only template the tool reads; without it the
+    # body of a new task is empty.
+    root = tmp_path / ".tasks"
+    root.mkdir()
+    assert storage.read_task_template(root) == ""
+    (root / "templates").mkdir()
+    (root / "templates" / "task.md").write_text("## Outcome\n", encoding="utf-8")
+    assert storage.read_task_template(root) == "## Outcome\n"
 
 
 def _leading_newline_count(text: str) -> int:
@@ -402,99 +407,3 @@ def test_resolve_show_banner_invalid_warns_and_falls_back(tmp_path: Path) -> Non
     assert any("Invalid settings.show_banner" in message for message in warnings)
 
 
-def test_resolve_task_body_sections_defaults_when_missing(tmp_path: Path) -> None:
-    root = tmp_path / ".tasks"
-    warnings: list[str] = []
-    sections = storage.resolve_task_body_sections(root, warn=warnings.append)
-    assert sections == [
-        {"name": "Summary", "default": "- TODO"},
-    ]
-    assert warnings == []
-
-
-def test_resolve_task_body_sections_reads_custom(tmp_path: Path) -> None:
-    root = tmp_path / ".tasks"
-    _write_config(
-        root,
-        (
-            "settings:\n"
-            "  task_body_sections:\n"
-            "    - name: Overview\n"
-            '      default: "- Describe the feature"\n'
-            "    - name: Design\n"
-            '      default: "- TODO"\n'
-            "    - name: Testing\n"
-            '      default: "- TODO"\n'
-        ),
-    )
-
-    warnings: list[str] = []
-    sections = storage.resolve_task_body_sections(root, warn=warnings.append)
-    assert sections == [
-        {"name": "Overview", "default": "- Describe the feature"},
-        {"name": "Design", "default": "- TODO"},
-        {"name": "Testing", "default": "- TODO"},
-    ]
-    assert warnings == []
-
-
-def test_resolve_task_body_sections_invalid_falls_back(tmp_path: Path) -> None:
-    root = tmp_path / ".tasks"
-    _write_config(
-        root,
-        (
-            "settings:\n"
-            "  task_body_sections:\n"
-            "    - not-a-dict\n"
-            "    - name: ''\n"
-        ),
-    )
-
-    warnings: list[str] = []
-    sections = storage.resolve_task_body_sections(root, warn=warnings.append)
-    assert sections == storage.DEFAULT_TASK_BODY_SECTIONS
-    assert any("Invalid section entry" in w for w in warnings)
-    assert any("Missing or invalid 'name'" in w for w in warnings)
-    assert any("No valid settings.task_body_sections" in w for w in warnings)
-
-
-def test_resolve_task_body_sections_non_list_falls_back(tmp_path: Path) -> None:
-    root = tmp_path / ".tasks"
-    _write_config(
-        root,
-        (
-            "settings:\n"
-            "  task_body_sections: not-a-list\n"
-        ),
-    )
-
-    warnings: list[str] = []
-    sections = storage.resolve_task_body_sections(root, warn=warnings.append)
-    assert sections == storage.DEFAULT_TASK_BODY_SECTIONS
-    assert any("Invalid settings.task_body_sections" in w for w in warnings)
-
-
-def test_resolve_task_body_sections_missing_default_uses_todo(tmp_path: Path) -> None:
-    root = tmp_path / ".tasks"
-    _write_config(
-        root,
-        (
-            "settings:\n"
-            "  task_body_sections:\n"
-            "    - name: Notes\n"
-        ),
-    )
-
-    sections = storage.resolve_task_body_sections(root)
-    assert sections == [{"name": "Notes", "default": "- TODO"}]
-
-
-def test_default_config_includes_task_body_sections() -> None:
-    payload = storage.default_config()
-    assert payload["settings"]["task_body_sections"] == storage.DEFAULT_TASK_BODY_SECTIONS
-
-
-def test_default_config_custom_task_body_sections() -> None:
-    custom = [{"name": "Notes", "default": "- TODO"}]
-    payload = storage.default_config(task_body_sections=custom)
-    assert payload["settings"]["task_body_sections"] == custom

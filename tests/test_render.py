@@ -34,13 +34,15 @@ def _task(
             status=status,
             date_created=created,
             date_completed=completed,
-            due_date=due_date,
-            priority=priority,
-            effort="m",
+            fields={"priority": priority, "effort": "m", "due_date": due_date, "owner": None},
         ),
         body="",
         task_dir=Path("/tmp") / name,
     )
+
+
+# Fields of a config without settings.fields: all four built-ins.
+FIELDS = [storage.BUILTIN_FIELDS[name] for name in storage.DEFAULT_FIELD_NAMES]
 
 
 def _columns(*items: tuple[str, int]) -> list[dict[str, int | str]]:
@@ -82,7 +84,7 @@ def test_render_task_list_plain_shape_stable() -> None:
         ("created", 10),
     )
 
-    output = render.render_task_list_plain(tasks, unmet, columns)
+    output = render.render_task_list_plain(tasks, unmet, columns, FIELDS)
     lines = output.splitlines()
     assert lines[0].startswith("task_name")
     assert "task_id" not in lines[0]
@@ -96,19 +98,26 @@ def test_render_task_list_plain_applies_truncation() -> None:
     unmet = {"t-20260222-001": 0}
     columns = _columns(("task_name", 8), ("created", 10))
 
-    output = render.render_task_list_plain(tasks, unmet, columns)
+    output = render.render_task_list_plain(tasks, unmet, columns, FIELDS)
     assert "very-lo…" in output
     assert "2026-02-22" in output
 
 
-def test_render_task_list_plain_supports_spec_readiness_column() -> None:
-    tasks = [_task("alpha", "todo", "p2", "t-20260222-001", "2026-02-22")]
-    unmet = {"t-20260222-001": 0}
-    columns = _columns(("task_name", 16), ("spec_readiness", 14))
+def test_render_task_list_plain_supports_custom_field_and_summary_columns() -> None:
+    # Purpose: any configured field (here a custom choice field) and the summary can be list
+    # columns; unset values render as "-".
+    kind = storage.parse_field_entries([{"name": "kind", "type": "choice", "values": ["theory"]}])[0]
+    task = _task("alpha", "todo", "p2", "t-20260222-001", "2026-02-22")
+    task.metadata.fields["kind"] = "theory"
+    task.metadata.summary = "Prove it."
+    other = _task("beta", "todo", "p2", "t-20260222-002", "2026-02-22")
+    columns = _columns(("task_name", 10), ("kind", 8), ("summary", 12))
 
-    output = render.render_task_list_plain(tasks, unmet, columns)
-    assert "spec_readiness" in output
-    assert "unspecified" in output
+    output = render.render_task_list_plain([task, other], {}, columns, [*FIELDS, kind])
+
+    assert output.splitlines()[0].split() == ["task_name", "kind", "summary"]
+    assert "theory" in output and "Prove it." in output
+    assert output.splitlines()[3].split() == ["beta", "-", "-"]
 
 
 def test_render_task_list_plain_supports_completed_column() -> None:
@@ -126,7 +135,7 @@ def test_render_task_list_plain_supports_completed_column() -> None:
     unmet = {"t-20260222-003": 0}
     columns = _columns(("task_name", 16), ("completed", 10))
 
-    output = render.render_task_list_plain(tasks, unmet, columns)
+    output = render.render_task_list_plain(tasks, unmet, columns, FIELDS)
     assert "completed" in output.splitlines()[0]
     assert "2026-02-23" in output
 
@@ -146,6 +155,7 @@ def test_render_task_list_plain_supports_due_date_column() -> None:
         [task],
         {task.metadata.task_id: 0},
         _columns(("task_name", 16), ("due_date", 10)),
+        FIELDS,
     )
 
     assert "due_date" in output.splitlines()[0]
@@ -199,15 +209,16 @@ def test_render_task_list_rich_highlights_only_open_overdue_dates(
             [overdue, completed, due_today],
             {"t-1": 0, "t-2": 0, "t-3": 0},
             _columns(("task_name", 16), ("due_date", 10)),
+            FIELDS,
             today=dt.date(2026, 7, 29),
         )
     )
     ansi = output.getvalue()
 
-    assert render.is_overdue(overdue, today=dt.date(2026, 7, 29)) is True
-    assert render.is_overdue(completed, today=dt.date(2026, 7, 29)) is False
-    assert render.is_due_today(due_today, today=dt.date(2026, 7, 29)) is True
-    assert render.is_due_today(completed, today=dt.date(2026, 7, 29)) is False
+    today = dt.date(2026, 7, 29)
+    assert render.date_highlight_style(overdue, "2026-07-01", today=today) == "bold red"
+    assert render.date_highlight_style(completed, "2026-07-01", today=today) == ""
+    assert render.date_highlight_style(due_today, "2026-07-29", today=today) == "bold orange3"
     assert re.search(r"\x1b\[[0-9;]*31m2026-07-01", ansi)
     assert re.search(r"\x1b\[[0-9;]*38;5;\d+m2026-07-29", ansi)
 
@@ -234,7 +245,7 @@ def test_render_task_list_rich_sections_and_labels() -> None:
         ("created", 10),
     )
 
-    renderable = render.render_task_list_rich(tasks, unmet, columns)
+    renderable = render.render_task_list_rich(tasks, unmet, columns, FIELDS)
     console = Console(record=True, width=140, force_terminal=False, color_system=None)
     console.print(renderable)
     text = console.export_text()
@@ -265,9 +276,9 @@ def test_render_task_list_rich_done_defaults_swap_deps_for_completed() -> None:
         )
     ]
     unmet = {"t-20260222-003": 0}
-    columns = storage.default_list_table_columns()
+    columns = storage.default_list_table_columns(FIELDS)
 
-    renderable = render.render_task_list_rich(tasks, unmet, columns)
+    renderable = render.render_task_list_rich(tasks, unmet, columns, FIELDS)
     console = Console(width=120, record=True)
     console.print(renderable)
     text = console.export_text()
@@ -283,38 +294,28 @@ def test_render_dependency_graph_tree_marks_shared_nodes() -> None:
                 task_id="t-1",
                 task_name="release-cli",
                 status="doing",
-                priority="p1",
-                effort="l",
                 depends_on=["t-2", "t-3"],
             ),
             DependencyGraphNode(
                 task_id="t-2",
                 task_name="package-wheel",
                 status="todo",
-                priority="p2",
-                effort="m",
                 depends_on=["t-4"],
             ),
             DependencyGraphNode(
                 task_id="t-3",
                 task_name="finalize-readme",
                 status="todo",
-                priority="p2",
-                effort="s",
             ),
             DependencyGraphNode(
                 task_id="t-4",
                 task_name="generate-changelog",
                 status="doing",
-                priority="p2",
-                effort="m",
             ),
             DependencyGraphNode(
                 task_id="t-5",
                 task_name="publish-blog",
                 status="todo",
-                priority="p2",
-                effort="m",
                 depends_on=["t-2"],
             ),
         ],
@@ -337,8 +338,6 @@ def test_render_dependency_graph_tree_shows_hidden_dependency_count() -> None:
                 task_id="t-1",
                 task_name="release-cli",
                 status="doing",
-                priority="p1",
-                effort="l",
                 depends_on=["t-2"],
                 hidden_depends_on=["t-9"],
             ),
@@ -346,8 +345,6 @@ def test_render_dependency_graph_tree_shows_hidden_dependency_count() -> None:
                 task_id="t-2",
                 task_name="package-wheel",
                 status="todo",
-                priority="p2",
-                effort="m",
             ),
         ],
         root_ids=["t-1"],
@@ -366,38 +363,28 @@ def test_render_dependency_graph_layers_layout_and_order() -> None:
                 task_id="t-4",
                 task_name="generate-changelog",
                 status="doing",
-                priority="p2",
-                effort="m",
             ),
             DependencyGraphNode(
                 task_id="t-3",
                 task_name="finalize-readme",
                 status="todo",
-                priority="p2",
-                effort="s",
             ),
             DependencyGraphNode(
                 task_id="t-2",
                 task_name="package-wheel",
                 status="todo",
-                priority="p2",
-                effort="m",
                 depends_on=["t-4"],
             ),
             DependencyGraphNode(
                 task_id="t-5",
                 task_name="publish-blog",
                 status="todo",
-                priority="p2",
-                effort="m",
                 depends_on=["t-2"],
             ),
             DependencyGraphNode(
                 task_id="t-1",
                 task_name="release-cli",
                 status="doing",
-                priority="p1",
-                effort="l",
                 depends_on=["t-2", "t-3"],
             ),
         ],
@@ -427,8 +414,6 @@ def test_render_dependency_graph_tree_rich_contains_expected_tokens() -> None:
                 task_id="t-1",
                 task_name="release-cli",
                 status="doing",
-                priority="p1",
-                effort="l",
                 depends_on=["t-2"],
                 hidden_depends_on=["t-9"],
             ),
@@ -436,15 +421,11 @@ def test_render_dependency_graph_tree_rich_contains_expected_tokens() -> None:
                 task_id="t-2",
                 task_name="package-wheel",
                 status="todo",
-                priority="p2",
-                effort="m",
             ),
             DependencyGraphNode(
                 task_id="t-3",
                 task_name="publish-blog",
                 status="todo",
-                priority="p2",
-                effort="m",
                 depends_on=["t-2"],
             ),
         ],
@@ -473,15 +454,11 @@ def test_render_dependency_graph_layers_rich_contains_updated_l0_heading() -> No
                 task_id="t-1",
                 task_name="base",
                 status="todo",
-                priority="p2",
-                effort="m",
             ),
             DependencyGraphNode(
                 task_id="t-2",
                 task_name="top",
                 status="doing",
-                priority="p1",
-                effort="m",
                 depends_on=["t-1"],
             ),
         ],
@@ -501,8 +478,9 @@ def test_render_dependency_graph_layers_rich_contains_updated_l0_heading() -> No
 
 
 def test_render_task_detail_plain_header_first_layout(tmp_path: Path) -> None:
-    # Purpose: plain detail output keeps its header-first line order, and lists task.md first,
-    # then every other file in the folder in name order.
+    # Purpose: plain detail output keeps its header-first line order (choice fields as chips,
+    # summary, text fields with tags, date fields with the lifecycle dates), and lists task.md
+    # first, then every other file in the folder in name order.
     task_dir = tmp_path / "build-nightly-report"
     task_dir.mkdir()
     (task_dir / "task.md").write_text("task", encoding="utf-8")
@@ -516,10 +494,9 @@ def test_render_task_detail_plain_header_first_layout(tmp_path: Path) -> None:
             task_name="build-nightly-report",
             status="todo",
             date_created="2026-02-06",
-            priority="p0",
-            effort="l",
-            owner="alex",
+            summary="Nightly report from exported snapshots.",
             tags=["reporting", "automation"],
+            fields={"priority": "p0", "effort": "l", "due_date": None, "owner": "alex"},
         ),
         body="\n\n## Summary\n- demo\n",
         task_dir=task_dir,
@@ -527,17 +504,18 @@ def test_render_task_detail_plain_header_first_layout(tmp_path: Path) -> None:
     deps = [("add-json-export", "t-20260205-001", "todo")]
     blocked_by = [("downstream-task", "t-20260207-001", "doing")]
 
-    output = _strip_osc8(render.render_task_detail_plain(task, deps, blocked_by, 1))
+    output = _strip_osc8(render.render_task_detail_plain(task, deps, blocked_by, 1, FIELDS))
     lines = output.splitlines()
 
     assert lines[0] == "build-nightly-report (t-20260206-001)"
     assert lines[1] == "[todo] [p0] [l] [deps: blocked(1)]"
-    assert lines[2] == "owner: alex    tags: reporting, automation"
-    assert lines[3] == "created: 2026-02-06    started: -    completed: -"
-    assert lines[4] == "depends_on: add-json-export (t-20260205-001) [todo]"
-    assert lines[5] == "blocked_by: downstream-task (t-20260207-001) [doing]"
-    assert lines[6] == f"dir: {task_dir.name}"
-    assert lines[7] == "files: task.md | activity.md | notes.txt | plan.md"
+    assert lines[2] == "summary: Nightly report from exported snapshots."
+    assert lines[3] == "owner: alex    tags: reporting, automation"
+    assert lines[4] == "created: 2026-02-06    started: -    completed: -    due_date: -"
+    assert lines[5] == "depends_on: add-json-export (t-20260205-001) [todo]"
+    assert lines[6] == "blocks: downstream-task (t-20260207-001) [doing]"
+    assert lines[7] == f"dir: {task_dir.name}"
+    assert lines[8] == "files: task.md | activity.md | notes.txt | plan.md"
     assert "## Summary" in output
 
 
@@ -555,20 +533,20 @@ def test_render_task_detail_plain_uses_dash_for_empty_fields(tmp_path: Path) -> 
             task_name="build-nightly-report",
             status="todo",
             date_created="2026-02-06",
-            priority="p2",
-            effort="m",
+            fields={"priority": "p2", "effort": "m"},
         ),
         body="",
         task_dir=task_dir,
     )
 
-    raw_output = render.render_task_detail_plain(task, [], [], 0)
+    raw_output = render.render_task_detail_plain(task, [], [], 0, FIELDS)
     output = _strip_osc8(raw_output)
     assert "[todo] [p2] [m] [deps: ready]" in output
+    assert "summary: -" in output
     assert "owner: -    tags: -" in output
-    assert "started: -    completed: -" in output
+    assert "started: -    completed: -    due_date: -" in output
     assert "depends_on: -" in output
-    assert "blocked_by: -" in output
+    assert "blocks: -" in output
     assert f"dir: {task_dir.name}" in output
     assert "files: task.md | activity.md\n" in output
     assert "(missing)" not in output
@@ -579,30 +557,22 @@ def test_render_task_detail_plain_uses_dash_for_empty_fields(tmp_path: Path) -> 
     assert "plan.md" not in linked_labels
 
 
-def test_render_task_detail_plain_optionally_shows_due_date(tmp_path: Path) -> None:
-    # Purpose: plain detail output shows the due date only when asked to.
-    task = _task(
-        "dated-task",
-        "todo",
-        "p2",
-        "t-1",
-        "2026-07-01",
-        due_date="2026-08-15",
-    )
+def test_render_task_detail_shows_only_configured_fields(tmp_path: Path) -> None:
+    # Purpose: view shows the configured fields only; values of fields not configured (e.g. the
+    # deleted spec_readiness, or a disabled due_date) stay in the file but are not displayed.
+    task = _task("dated-task", "todo", "p2", "t-1", "2026-07-01", due_date="2026-08-15")
+    task.metadata.fields["spec_readiness"] = "autonomous"
     task.task_dir = tmp_path
 
-    hidden = render.render_task_detail_plain(task, [], [], 0, enable_links=False)
-    visible = render.render_task_detail_plain(
-        task,
-        [],
-        [],
-        0,
-        enable_links=False,
-        show_due_date=True,
+    all_fields = render.render_task_detail_plain(task, [], [], 0, FIELDS, enable_links=False)
+    priority_only = render.render_task_detail_plain(
+        task, [], [], 0, [storage.BUILTIN_FIELDS["priority"]], enable_links=False
     )
 
-    assert "due_date:" not in hidden
-    assert "due_date: 2026-08-15" in visible
+    assert "due_date: 2026-08-15" in all_fields
+    assert "due_date:" not in priority_only
+    assert "[m]" not in priority_only
+    assert "autonomous" not in all_fields
 
 
 def test_render_task_detail_plain_lists_task_md_when_folder_unreadable(
@@ -621,8 +591,6 @@ def test_render_task_detail_plain_lists_task_md_when_folder_unreadable(
             task_name="build-nightly-report",
             status="todo",
             date_created="2026-02-06",
-            priority="p2",
-            effort="m",
         ),
         body="",
         task_dir=task_dir,
@@ -636,7 +604,7 @@ def test_render_task_detail_plain_lists_task_md_when_folder_unreadable(
         return original_iterdir(self)
 
     monkeypatch.setattr(Path, "iterdir", _broken_iterdir)
-    output = render.render_task_detail_plain(task, [], [], 0, enable_links=False)
+    output = render.render_task_detail_plain(task, [], [], 0, FIELDS, enable_links=False)
 
     assert "files: task.md\n" in output
 
@@ -658,10 +626,9 @@ def test_render_task_detail_rich_header_first_layout(tmp_path: Path) -> None:
             task_name="build-nightly-report",
             status="todo",
             date_created="2026-02-06",
-            priority="p0",
-            effort="l",
-            owner="alex",
+            summary="Nightly report from exported snapshots.",
             tags=["reporting", "automation"],
+            fields={"priority": "p0", "effort": "l", "due_date": None, "owner": "alex"},
         ),
         body="\n\n## Summary\n- demo\n",
         task_dir=task_dir,
@@ -669,16 +636,18 @@ def test_render_task_detail_rich_header_first_layout(tmp_path: Path) -> None:
     deps = [("add-json-export", "t-20260205-001", "todo")]
     blocked_by = [("downstream-task", "t-20260207-001", "doing")]
 
-    renderable = render.render_task_detail_rich(task, deps, blocked_by, 1)
+    renderable = render.render_task_detail_rich(task, deps, blocked_by, 1, FIELDS)
     console = Console(record=True, width=200, force_terminal=False, color_system=None)
     console.print(renderable)
     text = console.export_text()
 
     assert "build-nightly-report (t-20260206-001)" in text
     assert "[todo] [p0] [l] [deps: blocked(1)]" in text
+    assert "summary: Nightly report from exported snapshots." in text
     assert "owner: alex    tags: reporting, automation" in text
+    assert "due_date: -" in text
     assert "depends_on: add-json-export (t-20260205-001) [todo]" in text
-    assert "blocked_by: downstream-task (t-20260207-001) [doing]" in text
+    assert "blocks: downstream-task (t-20260207-001) [doing]" in text
     assert f"dir: {task_dir.name}" in text
     assert "files: task.md | activity.md | plan.md" in text
     assert "extra:" not in text
@@ -694,8 +663,6 @@ def test_render_create_success_plain_with_links(tmp_path: Path) -> None:
             task_name="create-task",
             status="todo",
             date_created="2026-02-25",
-            priority="p2",
-            effort="m",
         ),
         body="",
         task_dir=task_dir,
@@ -706,9 +673,7 @@ def test_render_create_success_plain_with_links(tmp_path: Path) -> None:
 
     assert "\x1b]8;;" in raw_output
     assert "Created: create-task (t-20260225-001)" in output
-    assert "links: dir | task.md" in output
-    assert str(task_dir.resolve()) not in output
-    assert str(task.task_md_path.resolve()) not in output
+    assert output.splitlines()[-1] == str(task.task_md_path.resolve())
 
 
 def test_render_create_success_plain_without_links(tmp_path: Path) -> None:
@@ -720,8 +685,6 @@ def test_render_create_success_plain_without_links(tmp_path: Path) -> None:
             task_name="create-task",
             status="todo",
             date_created="2026-02-25",
-            priority="p2",
-            effort="m",
         ),
         body="",
         task_dir=task_dir,
@@ -731,9 +694,7 @@ def test_render_create_success_plain_without_links(tmp_path: Path) -> None:
 
     assert "\x1b]8;;" not in output
     assert "Created: create-task (t-20260225-001)" in output
-    assert "links: dir | task.md" in output
-    assert str(task_dir.resolve()) not in output
-    assert str(task.task_md_path.resolve()) not in output
+    assert output.splitlines()[-1] == str(task.task_md_path.resolve())
 
 
 def test_render_create_success_rich(tmp_path: Path) -> None:
@@ -748,8 +709,6 @@ def test_render_create_success_rich(tmp_path: Path) -> None:
             task_name="create-task",
             status="todo",
             date_created="2026-02-25",
-            priority="p2",
-            effort="m",
         ),
         body="",
         task_dir=task_dir,
@@ -761,9 +720,7 @@ def test_render_create_success_rich(tmp_path: Path) -> None:
     text = console.export_text()
 
     assert "Created: create-task (t-20260225-001)" in text
-    assert "links: dir | task.md" in text
-    assert str(task_dir.resolve()) not in text
-    assert str(task.task_md_path.resolve()) not in text
+    assert str(task.task_md_path.resolve()) in text
 
 
 def test_render_tag_counts_plain_with_status_breakdown() -> None:

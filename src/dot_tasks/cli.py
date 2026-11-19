@@ -358,9 +358,30 @@ def _root_for_interactive_lookup(tasks_root: Path | None) -> Path | None:
 
 def _service(tasks_root: Path | None = None, *, init: bool = False) -> TaskService:
     root = _resolve_init_root(tasks_root) if init else _resolve_existing_root(tasks_root)
-    svc = TaskService(root)
+    svc = TaskService(root, warn=_warn_config)
     svc.ensure_layout()
     return svc
+
+
+def _field_entry_names(entries: list[object]) -> list[str]:
+    names = []
+    for entry in entries:
+        if isinstance(entry, str):
+            names.append(entry)
+        elif isinstance(entry, dict) and isinstance(entry.get("name"), str):
+            names.append(entry["name"])
+    return names
+
+
+def _split_args(args: list[str] | None, *, max_positional: int, what: str) -> tuple[list[str], list[str]]:
+    """Split positional arguments into plain values and key=value assignments."""
+    positional = [arg for arg in args or [] if "=" not in arg]
+    assignments = [arg for arg in args or [] if "=" in arg]
+    if len(positional) > max_positional:
+        raise TaskValidationError(
+            f"Unexpected argument '{positional[max_positional]}': expected {what} and key=value pairs"
+        )
+    return positional, assignments
 
 
 def _select_task_if_missing(
@@ -607,10 +628,19 @@ def init_cmd(
                 svc.tasks_root,
                 warn=_warn_config,
             )
-            current_due_date_settings = storage.resolve_due_date_settings(
-                svc.tasks_root,
-                warn=_warn_config,
-            )
+            raw_settings = storage.read_config(svc.tasks_root).get("settings")
+            raw_settings = raw_settings if isinstance(raw_settings, dict) else {}
+            current_field_entries = raw_settings.get("fields") if isinstance(raw_settings.get("fields"), list) else None
+            if current_field_entries is not None:
+                default_field_names = [
+                    field_def.name
+                    for field_def in storage.parse_field_entries(current_field_entries)
+                    if field_def.name in storage.BUILTIN_FIELDS
+                ]
+            elif cfg_path.exists():
+                default_field_names = list(storage.DEFAULT_FIELD_NAMES)
+            else:
+                default_field_names = list(storage.INIT_DEFAULT_FIELD_NAMES)
             current_columns = storage.resolve_list_table_columns(
                 svc.tasks_root,
                 warn=_warn_config,
@@ -618,19 +648,19 @@ def init_cmd(
             form = init_config_form(
                 default_interactive_enabled=current_interactive_enabled,
                 default_show_banner=current_show_banner,
-                default_due_dates_enabled=current_due_date_settings.enabled,
-                due_dates_configured=current_due_date_settings.configured,
+                current_field_entries=current_field_entries,
+                default_field_names=default_field_names,
                 default_list_column_names=[str(column["name"]) for column in current_columns],
                 default_append_agents_snippet=append_agents_snippet,
                 default_agents_file=str(agents_file) if agents_file is not None else "AGENTS.md",
             )
             if form is None:
                 _exit_canceled(1)
+            for message in storage.migrate_retired_settings(svc.tasks_root):
+                typer.echo(message)
             selected_interactive_enabled = bool(form["interactive_enabled"])
             selected_show_banner = bool(form["show_banner"])
-            selected_due_dates_enabled = bool(
-                form.get("due_dates_enabled", current_due_date_settings.enabled)
-            )
+            selected_fields = list(form.get("fields") or [])
             selected_list_columns = form["list_columns"]
             should_append_agents_snippet = bool(form.get("append_agents_snippet", append_agents_snippet))
             selected_agents_value = form.get("agents_file")
@@ -641,26 +671,28 @@ def init_cmd(
                 interactive_enabled=selected_interactive_enabled,
                 list_columns=selected_list_columns,
                 show_banner=selected_show_banner,
-                due_dates_enabled=selected_due_dates_enabled,
+                fields=selected_fields,
             )
             typer.echo(f"Initialized tasks root: {svc.tasks_root}")
             typer.echo(
                 f"{'Created' if status == 'created' else 'Updated'} config: {cfg_path} "
                 f"(interactive_enabled={selected_interactive_enabled}, "
                 f"show_banner={selected_show_banner}, "
-                f"due_dates_enabled={selected_due_dates_enabled})"
+                f"fields={', '.join(_field_entry_names(selected_fields)) or '-'})"
             )
         else:
             typer.echo(f"Initialized tasks root: {svc.tasks_root}")
             if cfg_path.exists():
                 typer.echo(f"Using existing config: {cfg_path}")
+                for message in storage.migrate_retired_settings(svc.tasks_root):
+                    typer.echo(message)
             else:
                 status = storage.upsert_init_config(svc.tasks_root)
                 typer.echo(
                     f"{'Created' if status == 'created' else 'Updated'} config: {cfg_path} "
                     f"(interactive_enabled={storage.DEFAULT_INTERACTIVE_ENABLED}, "
                     f"show_banner={storage.DEFAULT_SHOW_BANNER}, "
-                    f"due_dates_enabled={storage.DEFAULT_DUE_DATES_ENABLED})"
+                    f"fields={', '.join(storage.INIT_DEFAULT_FIELD_NAMES)})"
                 )
 
         readme_path = storage.workflow_doc_path(svc.tasks_root)
@@ -745,15 +777,15 @@ def add_agents_snippet_cmd(
 
 @app.command("create")
 def create_cmd(
-    task_name: Annotated[str | None, typer.Argument(help="Unique kebab-case task name")] = None,
-    priority: Annotated[str, typer.Option("--priority")] = "p2",
-    effort: Annotated[str, typer.Option("--effort")] = "m",
-    spec_readiness: Annotated[str, typer.Option("--spec-readiness")] = "unspecified",
-    owner: Annotated[str | None, typer.Option("--owner")] = None,
+    args: Annotated[
+        list[str] | None,
+        typer.Argument(
+            help="Task name (kebab-case), then field assignments: summary=\"...\" priority=p1 ...",
+            show_default=False,
+        ),
+    ] = None,
     tag: Annotated[list[str], typer.Option("--tag", help="Can be repeated")] = [],
     depends_on: Annotated[list[str], typer.Option("--depends-on", help="Task name or task_id")] = [],
-    due_date: Annotated[str | None, typer.Option("--due-date", help="Due date (YYYY-MM-DD)")] = None,
-    summary: Annotated[str, typer.Option("--summary")] = "",
     nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
 ) -> None:
@@ -765,64 +797,43 @@ def create_cmd(
             svc.tasks_root,
             nointeractive=nointeractive,
         )
+        positional, assignment_args = _split_args(args, max_positional=1, what="a task name")
+        task_name = positional[0] if positional else None
+        field_values = service.parse_assignments(assignment_args)
 
         open_form = task_name is None and _can_prompt(interactive_enabled)
         if task_name is None and not open_form:
             raise TaskValidationError("task_name is required in non-interactive mode")
 
         name = task_name
-        local_priority = priority
-        local_effort = effort
-        local_spec_readiness = spec_readiness
-        local_owner = owner
         local_tags = list(tag)
         local_depends = list(depends_on)
-        local_due_date = due_date
-        local_summary = summary
-        local_section_values: dict[str, str] | None = None
-
         if open_form:
             tasks = svc.list_tasks()
-            dependency_options = _dependency_choices(tasks)
-            tag_options = _tag_choices(tasks)
-            task_body_sections = storage.resolve_task_body_sections(svc.tasks_root)
-            due_date_settings = storage.resolve_due_date_settings(svc.tasks_root)
             form = create_form(
                 default_name=task_name,
-                dependency_options=dependency_options,
-                tag_options=tag_options,
-                task_body_sections=task_body_sections,
-                due_dates_enabled=due_date_settings.enabled,
+                dependency_options=_dependency_choices(tasks),
+                tag_options=_tag_choices(tasks),
+                field_defs=svc.field_defs,
                 validate_task_name=svc.validate_new_task_name,
                 validate_depends_on=lambda deps: svc.check_circular_dependencies(None, deps),
             )
             if form is None:
                 _exit_canceled(1)
             name = form["task_name"]
-            local_priority = form["priority"]
-            local_effort = form["effort"]
-            local_spec_readiness = form.get("spec_readiness", "unspecified")
-            local_owner = form["owner"]
             local_tags = form["tags"]
             local_depends = form["depends_on"]
-            local_due_date = form.get("due_date")
-            local_summary = form.get("summary", "")
-            local_section_values = form.get("section_values")
+            # Assignments given on the command line win over the form.
+            field_values = {**form.get("field_values", {}), **field_values}
 
         if not name:
             raise TaskValidationError("task_name is required")
 
         task = svc.create_task(
             name,
-            summary=local_summary,
-            priority=local_priority,
-            effort=local_effort,
-            spec_readiness=local_spec_readiness,
-            owner=local_owner,
+            field_values=field_values,
             tags=local_tags,
             depends_on=local_depends,
-            due_date=local_due_date,
-            section_values=local_section_values,
         )
         if _can_render_rich_detail_output():
             _print_rich(render.render_create_success_rich(task))
@@ -887,13 +898,16 @@ def complete_cmd(
 
 @app.command("list")
 def list_cmd(
-    status: Annotated[
-        str | None,
+    args: Annotated[
+        list[str] | None,
         typer.Argument(
-            help="Optional status filter: todo|doing|done or all (default: todo|doing)",
+            help=(
+                "Optional status filter (todo|doing|done or all; default todo|doing), then "
+                "field filters key=value (key= matches unset)"
+            ),
             show_default=False,
         ),
-    ] = "todo|doing",
+    ] = None,
     as_json: Annotated[bool, typer.Option("--json")] = False,
     tag: Annotated[list[str], typer.Option("--tag", help="Can be repeated")] = [],
     exclude_tag: Annotated[list[str], typer.Option("--exclude-tag", help="Can be repeated")] = [],
@@ -906,32 +920,32 @@ def list_cmd(
 
     def _inner() -> None:
         svc = _service(tasks_root)
+        positional, filter_args = _split_args(args, max_positional=1, what="a status filter")
+        status = positional[0] if positional else "todo|doing"
         tasks = svc.list_tasks(
             status=status,
             include_tags=tag,
             exclude_tags=exclude_tag,
             require_all_tags=all_tags,
             untagged_only=untagged,
+            field_filters=service.parse_filters(filter_args),
         )
-        list_columns = storage.resolve_list_table_columns(svc.tasks_root, warn=_warn_config)
-        due_date_settings = storage.resolve_due_date_settings(
+        field_defs = svc.field_defs
+        list_columns = storage.resolve_list_table_columns(
             svc.tasks_root,
             warn=_warn_config,
-        )
-        list_columns = storage.apply_due_date_list_setting(
-            list_columns,
-            enabled=due_date_settings.enabled,
+            field_defs=field_defs,
         )
         if tasks and all(task.metadata.status == "completed" for task in tasks):
-            list_columns = storage.apply_done_list_defaults(list_columns)
+            list_columns = storage.apply_done_list_defaults(list_columns, field_defs)
 
         unmet_counts = {task.metadata.task_id: svc.dependency_health(task)[0] for task in tasks}
         if as_json:
             typer.echo(render.render_task_list_json(tasks, unmet_counts))
         elif _can_render_rich_list_output():
-            _print_rich(render.render_task_list_rich(tasks, unmet_counts, list_columns))
+            _print_rich(render.render_task_list_rich(tasks, unmet_counts, list_columns, field_defs))
         else:
-            typer.echo(render.render_task_list_plain(tasks, unmet_counts, list_columns))
+            typer.echo(render.render_task_list_plain(tasks, unmet_counts, list_columns, field_defs))
 
     _run_and_handle(_inner)
 
@@ -1013,31 +1027,21 @@ def view_cmd(
         if as_json:
             typer.echo(render.render_task_detail_json(task, deps))
         else:
-            due_date_settings = storage.resolve_due_date_settings(
-                svc.tasks_root,
-                warn=_warn_config,
-            )
-            blocked_by = svc.blocked_by_rows(task)
+            blocks = svc.blocks_rows(task)
             unmet_count, _ = svc.dependency_health(task)
             if _can_render_rich_detail_output():
                 _print_rich(
-                    render.render_task_detail_rich(
-                        task,
-                        deps,
-                        blocked_by,
-                        unmet_count,
-                        show_due_date=due_date_settings.enabled,
-                    )
+                    render.render_task_detail_rich(task, deps, blocks, unmet_count, svc.field_defs)
                 )
             else:
                 typer.echo(
                     render.render_task_detail_plain(
                         task,
                         deps,
-                        blocked_by,
+                        blocks,
                         unmet_count,
+                        svc.field_defs,
                         enable_links=_can_interact(),
-                        show_due_date=due_date_settings.enabled,
                     )
                 )
 
@@ -1108,21 +1112,18 @@ def graph_cmd(
 
 @app.command("update")
 def update_cmd(
-    task_name: Annotated[str | None, typer.Argument(help="Task name or task_id")] = None,
+    args: Annotated[
+        list[str] | None,
+        typer.Argument(
+            help="Task name or task_id, then field assignments key=value (key= clears)",
+            show_default=False,
+        ),
+    ] = None,
     status: Annotated[str | None, typer.Option("--status")] = None,
-    priority: Annotated[str | None, typer.Option("--priority")] = None,
-    effort: Annotated[str | None, typer.Option("--effort")] = None,
-    spec_readiness: Annotated[str | None, typer.Option("--spec-readiness")] = None,
-    owner: Annotated[str | None, typer.Option("--owner")] = None,
     tag: Annotated[list[str], typer.Option("--tag")] = [],
     replace_tags: Annotated[bool, typer.Option("--replace-tags")] = False,
     depends_on: Annotated[list[str], typer.Option("--depends-on")] = [],
     clear_depends_on: Annotated[bool, typer.Option("--clear-depends-on")] = False,
-    due_date: Annotated[str | None, typer.Option("--due-date", help="Due date (YYYY-MM-DD)")] = None,
-    clear_due_date: Annotated[
-        bool,
-        typer.Option("--clear-due-date", help="Remove the due date"),
-    ] = False,
     nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
 ) -> None:
@@ -1134,20 +1135,18 @@ def update_cmd(
             svc.tasks_root,
             nointeractive=nointeractive,
         )
+        positional, assignment_args = _split_args(args, max_positional=1, what="a task")
+        task_name = positional[0] if positional else None
+        field_values = service.parse_assignments(assignment_args)
 
         has_edit_flags = any(
             [
                 status is not None,
-                priority is not None,
-                effort is not None,
-                spec_readiness is not None,
-                owner is not None,
+                bool(field_values),
                 bool(tag),
                 replace_tags,
                 bool(depends_on),
                 clear_depends_on,
-                due_date is not None,
-                clear_due_date,
             ]
         )
 
@@ -1160,67 +1159,41 @@ def update_cmd(
         selected_task = svc.view_task(selector)
 
         local_status = status
-        local_priority = priority
-        local_effort = effort
-        local_spec_readiness = spec_readiness
-        local_owner = owner
         local_tags = list(tag)
         local_replace_tags = replace_tags
         local_depends = list(depends_on)
         local_replace_depends = clear_depends_on
-        local_due_date = due_date
-        local_clear_due_date = clear_due_date
 
         open_form = _can_prompt(interactive_enabled) and (task_name is None or not has_edit_flags)
-        local_section_values: dict[str, str] | None = None
         if open_form:
             tasks = svc.list_tasks()
-            dependency_options = _dependency_choices(
-                tasks,
-                exclude_task_id=selected_task.metadata.task_id,
-            )
-            tag_options = _tag_choices(tasks)
-            task_body_sections = storage.resolve_task_body_sections(svc.tasks_root)
-            current_section_values = service._parse_body_sections(selected_task.body)
-            due_date_settings = storage.resolve_due_date_settings(svc.tasks_root)
             form = update_form(
                 selected_task,
-                dependency_options=dependency_options,
-                tag_options=tag_options,
-                task_body_sections=task_body_sections,
-                current_section_values=current_section_values,
-                due_dates_enabled=due_date_settings.enabled,
+                dependency_options=_dependency_choices(
+                    tasks,
+                    exclude_task_id=selected_task.metadata.task_id,
+                ),
+                tag_options=_tag_choices(tasks),
+                field_defs=svc.field_defs,
                 validate_depends_on=lambda deps: svc.check_circular_dependencies(selected_task.metadata.task_id, deps),
             )
             if form is None:
                 _exit_canceled(1)
             local_status = form.get("status")
-            local_priority = form.get("priority")
-            local_effort = form.get("effort")
-            local_spec_readiness = form.get("spec_readiness")
-            local_owner = form.get("owner")
+            field_values = {**form.get("field_values", {}), **field_values}
             local_tags = list(form.get("tags") or [])
             local_replace_tags = True
             local_depends = list(form.get("depends_on") or [])
             local_replace_depends = bool(form.get("replace_depends_on"))
-            local_due_date = form.get("due_date")
-            local_clear_due_date = bool(form.get("clear_due_date"))
-            local_section_values = form.get("section_values")
 
         task = svc.update_task(
             selector,
             status=local_status,
-            priority=local_priority,
-            effort=local_effort,
-            spec_readiness=local_spec_readiness,
-            owner=local_owner,
+            field_values=field_values,
             tags=local_tags,
             replace_tags=local_replace_tags,
             depends_on=local_depends,
             clear_depends_on=clear_depends_on or local_replace_depends,
-            due_date=local_due_date,
-            clear_due_date=local_clear_due_date,
-            section_values=local_section_values,
         )
         typer.echo(f"Updated: {task.metadata.task_name}")
 

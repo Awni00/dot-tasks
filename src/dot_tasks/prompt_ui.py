@@ -9,7 +9,7 @@ from typing import Any, Callable
 
 import typer
 
-from .models import Task, VALID_EFFORTS, VALID_PRIORITIES, VALID_SPEC_READINESS, VALID_STATUSES
+from .models import FieldDef, Task, VALID_STATUSES
 from .selector_ui import (
     SelectionSeparator,
     SelectorUnavailableError,
@@ -445,12 +445,17 @@ def init_config_form(
     *,
     default_interactive_enabled: bool = storage.DEFAULT_INTERACTIVE_ENABLED,
     default_show_banner: bool = storage.DEFAULT_SHOW_BANNER,
-    default_due_dates_enabled: bool = storage.DEFAULT_DUE_DATES_ENABLED,
-    due_dates_configured: bool = True,
+    current_field_entries: list[Any] | None = None,
+    default_field_names: list[str] | None = None,
     default_list_column_names: list[str] | None = None,
     default_append_agents_snippet: bool = False,
     default_agents_file: str = "AGENTS.md",
 ) -> dict[str, Any] | None:
+    """Interactive init settings.
+
+    *current_field_entries* are the existing settings.fields entries (kept, except built-ins
+    the user deselects); *default_field_names* are the built-ins preselected in the picker.
+    """
     default_interactive_value = "enabled" if default_interactive_enabled else "disabled"
     interactive_choice = _prompt_single_choice(
         "Default interactive behavior",
@@ -475,46 +480,54 @@ def init_config_form(
     if banner_choice is None:
         return None
 
-    due_dates_enabled = _prompt_yes_no(
-        "Enable due dates?",
-        default=default_due_dates_enabled,
+    existing_entries = list(current_field_entries or [])
+    previous_defs = storage.parse_field_entries(existing_entries)
+    previous_names = {field_def.name for field_def in previous_defs}
+    preselected = list(default_field_names if default_field_names is not None else storage.INIT_DEFAULT_FIELD_NAMES)
+    field_options = [
+        (name, f"{name} ({field_def.type})") for name, field_def in storage.BUILTIN_FIELDS.items()
+    ]
+    selected_fields = _prompt_multi_choice(
+        "Task fields (built-in; add your own in settings.fields)",
+        field_options,
+        default_values=[name for name in preselected if name in storage.BUILTIN_FIELDS],
     )
-    if due_dates_enabled is None:
+    if selected_fields is None:
         return None
 
-    width_map = dict(storage.LIST_TABLE_COLUMN_DEFAULT_WIDTHS)
-    fallback_column_names = [name for name, _ in storage.DEFAULT_LIST_TABLE_COLUMNS]
+    # Keep existing entries (custom fields, overrides) except deselected built-ins; append
+    # newly selected built-ins by name.
+    field_entries: list[Any] = []
+    kept_names: set[str] = set()
+    for entry in existing_entries:
+        name = entry if isinstance(entry, str) else entry.get("name") if isinstance(entry, dict) else None
+        if name in storage.BUILTIN_FIELDS and name not in selected_fields:
+            continue
+        field_entries.append(entry)
+        if isinstance(name, str):
+            kept_names.add(name)
+    field_entries.extend(name for name in selected_fields if name not in kept_names)
+    field_defs = storage.parse_field_entries(field_entries)
+
+    width_map = storage.column_default_widths(field_defs)
+    supported_columns = storage.supported_list_columns(field_defs)
+    fallback_column_names = storage.default_list_column_names(field_defs)
     if default_list_column_names is None:
         default_column_names = list(fallback_column_names)
     else:
-        seen: set[str] = set()
         default_column_names = []
         for name in default_list_column_names:
-            if name in storage.LIST_TABLE_COLUMNS_SUPPORTED and name not in seen:
+            if name in supported_columns and name not in default_column_names:
                 default_column_names.append(name)
-                seen.add(name)
-    supported_columns = [
-        name
-        for name in storage.LIST_TABLE_COLUMNS_SUPPORTED
-        if due_dates_enabled or name != "due_date"
-    ]
-    default_column_names = [
-        name for name in default_column_names if name in supported_columns
-    ]
-    # Preselect due_date when due dates are newly enabled: either re-enabled, or enabled
-    # by default for a config that predates the setting. A user who explicitly enabled
-    # due dates before keeps their column choice.
-    previously_enabled_explicitly = default_due_dates_enabled and due_dates_configured
-    if (
-        due_dates_enabled
-        and not previously_enabled_explicitly
-        and "due_date" not in default_column_names
-    ):
-        default_column_names.append("due_date")
-    column_options = [
-        (name, f"{name} (width {width_map[name]})")
-        for name in supported_columns
-    ]
+        # Preselect columns for fields enabled in this run (text fields stay opt-in).
+        for field_def in field_defs:
+            if (
+                field_def.name not in previous_names
+                and field_def.type != "text"
+                and field_def.name not in default_column_names
+            ):
+                default_column_names.append(field_def.name)
+    column_options = [(name, f"{name} (width {width_map[name]})") for name in supported_columns]
     selected_columns = _prompt_multi_choice(
         "Select list columns",
         column_options,
@@ -540,32 +553,106 @@ def init_config_form(
             return None
         agents_file = selected_agents_file.strip() or default_agents_file
 
-    list_columns = storage.apply_due_date_list_setting(
-        [{"name": name, "width": width_map[name]} for name in selected_columns],
-        enabled=due_dates_enabled,
-    )
     return {
         "interactive_enabled": interactive_choice == "enabled",
         "show_banner": banner_choice == "enabled",
-        "due_dates_enabled": due_dates_enabled,
-        "list_columns": list_columns,
+        "fields": field_entries,
+        "list_columns": [{"name": name, "width": width_map[name]} for name in selected_columns],
         "append_agents_snippet": append_agents_snippet,
         "agents_file": agents_file,
     }
+
+
+_NONE = "__none__"
+_KEEP = "__keep__"
+_CLEAR = "__clear__"
+_SET = "__set__"
+_MISSING = object()
+
+
+def _prompt_new_field_value(field_def: FieldDef) -> str | None | object:
+    """Ask for a new task's field value; returns _MISSING when the user cancels."""
+    if field_def.type == "choice":
+        options = [(value, value) for value in field_def.values]
+        if field_def.default is None:
+            options.insert(0, (_NONE, "(none)"))
+        selected = _prompt_single_choice(
+            field_def.name,
+            options,
+            default_value=field_def.default or _NONE,
+        )
+        if selected is None:
+            return _MISSING
+        return None if selected == _NONE else selected
+    if field_def.type == "date":
+        should_set = _prompt_yes_no(f"Set {field_def.name}?", default=field_def.default is not None)
+        if should_set is None:
+            return _MISSING
+        if not should_set:
+            return None
+        initial = dt.date.fromisoformat(field_def.default) if field_def.default else None
+        value = _prompt_date(field_def.name, initial_value=initial)
+        return _MISSING if value is None else value
+    raw = _safe_prompt(field_def.name, default=field_def.default or "")
+    if raw is None:
+        return _MISSING
+    return raw.strip() or None
+
+
+def _prompt_changed_field_value(field_def: FieldDef, current: object) -> str | None | object:
+    """Ask for an updated value; returns _KEEP for no change and _MISSING on cancel."""
+    if field_def.type == "choice":
+        options = [(_KEEP, f"Keep current ({current if current is not None else '-'})")]
+        options.extend((value, value) for value in field_def.values)
+        if current is not None:
+            options.append((_CLEAR, "Clear"))
+        selected = _prompt_single_choice(field_def.name, options, default_value=_KEEP)
+        if selected is None:
+            return _MISSING
+        if selected == _KEEP:
+            return _KEEP
+        return None if selected == _CLEAR else selected
+    if field_def.type == "date":
+        options = [(_KEEP, f"Keep current ({current if current is not None else '-'})"), (_SET, "Set or change")]
+        if current is not None:
+            options.append((_CLEAR, "Clear"))
+        action = _prompt_single_choice(field_def.name, options, default_value=_KEEP)
+        if action is None:
+            return _MISSING
+        if action == _CLEAR:
+            return None
+        if action != _SET:
+            return _KEEP
+        try:
+            initial = dt.date.fromisoformat(str(current)) if current else None
+        except ValueError:
+            initial = None
+        value = _prompt_date(field_def.name, initial_value=initial)
+        return _MISSING if value is None else value
+    current_text = "" if current is None else str(current)
+    raw = _safe_prompt(f"{field_def.name} (blank to clear)", default=current_text)
+    if raw is None:
+        return _MISSING
+    cleaned = raw.strip()
+    if cleaned == current_text:
+        return _KEEP
+    return cleaned or None
 
 
 def create_form(
     default_name: str | None = None,
     dependency_options: list[tuple[str, str]] | None = None,
     tag_options: list[tuple[str, str]] | None = None,
-    task_body_sections: list[dict[str, str]] | None = None,
-    due_dates_enabled: bool = False,
+    field_defs: list[FieldDef] | None = None,
     validate_task_name: Callable[[str], None] | None = None,
     validate_depends_on: Callable[[list[str]], None] | None = None,
 ) -> dict[str, Any] | None:
+    """Interactive create: name, one-line summary, configured fields, tags, dependencies.
+
+    The task description itself is written in task.md with an editor afterwards.
+    """
     dep_options = dependency_options or []
     available_tags = tag_options or []
-    sections = task_body_sections or []
 
     while True:
         raw_task_name = _safe_prompt("task_name", default=default_name or "")
@@ -582,59 +669,22 @@ def create_form(
                 typer.echo(f"Error: {e}", err=True)
                 continue
         break
-    priority = _prompt_single_choice(
-        "priority",
-        [(value, value) for value in VALID_PRIORITIES],
-        default_value="p2",
-    )
-    if priority is None:
-        return None
-    effort = _prompt_single_choice(
-        "effort",
-        [(value, value) for value in VALID_EFFORTS],
-        default_value="m",
-    )
-    if effort is None:
-        return None
-    due_date: str | None = None
-    if due_dates_enabled:
-        should_set_due_date = _prompt_yes_no("Set due date?", default=False)
-        if should_set_due_date is None:
-            return None
-        if should_set_due_date:
-            due_date = _prompt_date("due_date")
-            if due_date is None:
-                return None
-    owner = _safe_prompt("owner", default="")
-    if owner is None:
-        return None
 
-    section_values: dict[str, str] = {}
-    for section in sections:
-        name = section["name"]
-        default_content = section.get("default", "- TODO")
-        value = _safe_prompt(
-            f"{name} (Esc+Enter to submit)",
-            default=default_content,
-            multiline=True,
-        )
-        if value is None:
-            return None
-        section_values[name] = value.strip()
-
-    spec_readiness = _prompt_single_choice(
-        "spec_readiness",
-        [(value, value) for value in VALID_SPEC_READINESS],
-        default_value="unspecified",
-    )
-    if spec_readiness is None:
+    summary = _safe_prompt("summary (one line, optional)", default="")
+    if summary is None:
         return None
+    field_values: dict[str, str | None] = {"summary": summary.strip() or None}
+    for field_def in field_defs or []:
+        value = _prompt_new_field_value(field_def)
+        if value is _MISSING:
+            return None
+        field_values[field_def.name] = value  # type: ignore[assignment]
+
     tags = _prompt_tags(available_tags)
     if tags is None:
         return None
-    if not dep_options:
-        depends_on: list[str] = []
-    else:
+    depends_on: list[str] = []
+    if dep_options:
         should_set_depends = _prompt_yes_no("Set task dependencies?", default=False)
         if should_set_depends is None:
             return None
@@ -655,16 +705,9 @@ def create_form(
                         continue
                 depends_on = selected_depends
                 break
-        else:
-            depends_on = []
     return {
         "task_name": task_name,
-        "priority": priority,
-        "effort": effort,
-        "due_date": due_date,
-        "owner": owner.strip() or None,
-        "section_values": section_values,
-        "spec_readiness": spec_readiness,
+        "field_values": field_values,
         "tags": tags,
         "depends_on": depends_on,
     }
@@ -674,85 +717,33 @@ def update_form(
     task: Task,
     dependency_options: list[tuple[str, str]] | None = None,
     tag_options: list[tuple[str, str]] | None = None,
-    task_body_sections: list[dict[str, str]] | None = None,
-    current_section_values: dict[str, str] | None = None,
-    due_dates_enabled: bool = False,
+    field_defs: list[FieldDef] | None = None,
     validate_depends_on: Callable[[list[str]], None] | None = None,
 ) -> dict[str, Any] | None:
+    """Interactive update of frontmatter only; the body is edited directly in task.md."""
     dep_options = dependency_options or []
     available_tags = tag_options or []
-    sections = task_body_sections or []
-    existing_values = current_section_values or {}
 
     status = _prompt_single_choice(
         "status",
-        [("__keep__", "Keep current"), *[(value, value) for value in VALID_STATUSES]],
-        default_value="__keep__",
+        [(_KEEP, "Keep current"), *[(value, value) for value in VALID_STATUSES]],
+        default_value=_KEEP,
     )
     if status is None:
         return None
-    priority = _prompt_single_choice(
-        "priority",
-        [("__keep__", "Keep current"), *[(value, value) for value in VALID_PRIORITIES]],
-        default_value="__keep__",
-    )
-    if priority is None:
-        return None
-    effort = _prompt_single_choice(
-        "effort",
-        [("__keep__", "Keep current"), *[(value, value) for value in VALID_EFFORTS]],
-        default_value="__keep__",
-    )
-    if effort is None:
-        return None
-    due_date: str | None = None
-    clear_due_date = False
-    if due_dates_enabled:
-        due_date_action = _prompt_single_choice(
-            "due_date",
-            [
-                ("keep", "Keep current"),
-                ("set", "Set or change"),
-                ("clear", "Clear"),
-            ],
-            default_value="keep",
-        )
-        if due_date_action is None:
-            return None
-        if due_date_action == "set":
-            initial_due_date = (
-                dt.date.fromisoformat(task.metadata.due_date)
-                if task.metadata.due_date
-                else dt.date.today()
-            )
-            due_date = _prompt_date("due_date", initial_value=initial_due_date)
-            if due_date is None:
-                return None
-        elif due_date_action == "clear":
-            clear_due_date = True
-    spec_readiness = _prompt_single_choice(
-        "spec_readiness",
-        [("__keep__", "Keep current"), *[(value, value) for value in VALID_SPEC_READINESS]],
-        default_value="__keep__",
-    )
-    if spec_readiness is None:
-        return None
-    owner = _safe_prompt("owner (blank to keep)", default=task.metadata.owner or "")
-    if owner is None:
-        return None
 
-    section_values: dict[str, str] = {}
-    for section in sections:
-        name = section["name"]
-        default_content = existing_values.get(name, section.get("default", "- TODO"))
-        value = _safe_prompt(
-            f"{name} (Esc+Enter to submit)",
-            default=default_content,
-            multiline=True,
-        )
-        if value is None:
+    field_values: dict[str, str | None] = {}
+    summary = _safe_prompt("summary (blank to clear)", default=task.metadata.summary)
+    if summary is None:
+        return None
+    if summary.strip() != task.metadata.summary:
+        field_values["summary"] = summary.strip() or None
+    for field_def in field_defs or []:
+        value = _prompt_changed_field_value(field_def, task.metadata.fields.get(field_def.name))
+        if value is _MISSING:
             return None
-        section_values[name] = value.strip()
+        if value is not _KEEP:
+            field_values[field_def.name] = value  # type: ignore[assignment]
 
     tags = _prompt_tags(available_tags, default_values=task.metadata.tags)
     if tags is None:
@@ -782,14 +773,8 @@ def update_form(
                 replace_depends_on = True
                 break
     return {
-        "status": None if status == "__keep__" else status,
-        "priority": None if priority == "__keep__" else priority,
-        "effort": None if effort == "__keep__" else effort,
-        "due_date": due_date,
-        "clear_due_date": clear_due_date,
-        "spec_readiness": None if spec_readiness == "__keep__" else spec_readiness,
-        "owner": owner,
-        "section_values": section_values,
+        "status": None if status == _KEEP else status,
+        "field_values": field_values,
         "tags": tags,
         "depends_on": depends_on,
         "replace_depends_on": replace_depends_on,
