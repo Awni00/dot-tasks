@@ -796,7 +796,9 @@ def test_hand_written_unquoted_dates_are_read_as_iso_strings(tmp_path: Path) -> 
     runner.invoke(app, ["create", "hand-dated", "--tasks-root", str(root)])
     task_md = _task_md_path(root, "todo", "hand-dated")
     text = task_md.read_text(encoding="utf-8")
-    text = re.sub(r"date_created: '(\d{4}-\d{2}-\d{2})'", r"date_created: \1", text)
+    text, quoted_count = re.subn(r"date_created: '(\d{4}-\d{2}-\d{2})'", r"date_created: \1", text)
+    assert quoted_count == 1
+    assert "due_date: null" in text
     text = text.replace("due_date: null", "due_date: 2026-03-01")
     task_md.write_text(text, encoding="utf-8")
 
@@ -809,6 +811,7 @@ def test_hand_written_unquoted_dates_are_read_as_iso_strings(tmp_path: Path) -> 
     assert '"due_date": "2026-03-01"' in list_result.output
     assert view_result.exit_code == 0, view_result.output
     assert '"due_date": "2026-03-01"' in view_result.output
+    assert f'"date_created": "{dt.date.today().isoformat()}"' in view_result.output
     assert plain_view.exit_code == 0, plain_view.output
     assert create_result.exit_code == 0, create_result.output
 
