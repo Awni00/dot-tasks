@@ -110,6 +110,46 @@ def _parse_body_sections(body: str) -> dict[str, str]:
     return result
 
 
+_SECTION_HEADING_RE = re.compile(r"^## (.+)$", re.MULTILINE)
+
+
+def _replace_body_sections(
+    body: str,
+    sections: list[dict[str, str]],
+    section_values: dict[str, str],
+) -> str:
+    """Replace the content of the named ``## `` sections in *body*, keeping everything else.
+
+    Text before the first heading, sections not named in *section_values* (including ones
+    added by hand) and their order are preserved verbatim. Named sections missing from the
+    body are appended in configured order.
+    """
+    headings = list(_SECTION_HEADING_RE.finditer(body))
+    preamble = body[: headings[0].start()] if headings else body
+    blocks: list[tuple[str, str]] = []
+    for index, match in enumerate(headings):
+        end = headings[index + 1].start() if index + 1 < len(headings) else len(body)
+        blocks.append((match.group(1).strip(), body[match.start() : end]))
+
+    remaining = dict(section_values)
+    parts: list[str] = [preamble]
+    for index, (name, text) in enumerate(blocks):
+        if name not in remaining:
+            parts.append(text)
+            continue
+        separator = "\n" if index + 1 < len(blocks) else ""
+        parts.append(f"## {name}\n{remaining.pop(name).strip()}\n{separator}")
+
+    if remaining:
+        configured = [section["name"] for section in sections]
+        ordered = [name for name in configured if name in remaining]
+        ordered += [name for name in remaining if name not in configured]
+        appended = "\n".join(f"## {name}\n{remaining[name].strip()}\n" for name in ordered)
+        current = "".join(parts).rstrip("\n")
+        parts = [f"{current}\n\n{appended}" if current else appended]
+    return "".join(parts)
+
+
 def _today() -> str:
     return dt.date.today().isoformat()
 
@@ -554,8 +594,6 @@ class TaskService:
         self._validate_graph(active)
 
         storage.write_task(task)
-        task.activity_path.touch(exist_ok=True)
-        storage.append_activity(task, "human", "create", f"Task created ({task_id})")
 
         self._validate_and_persist_all()
         return self._find_by_selector(task_id)
@@ -583,13 +621,6 @@ class TaskService:
 
         storage.move_task_dir(task, self.tasks_root, "doing")
         storage.write_task(task)
-        if not task.plan_path.exists():
-            task.plan_path.write_text(
-                "## Plan\n"
-                "TODO: Write complete plan generated during plan mode verbosely here.",
-                encoding="utf-8",
-            )
-        storage.append_activity(task, "human", "plan", "Task started")
 
         self._validate_and_persist_all()
         return self._find_by_selector(task.metadata.task_id)
@@ -608,7 +639,6 @@ class TaskService:
 
         storage.move_task_dir(task, self.tasks_root, "completed")
         storage.write_task(task)
-        storage.append_activity(task, "human", "complete", "Task marked completed")
 
         self._validate_and_persist_all()
         return self._find_by_selector(task.metadata.task_id)
@@ -686,22 +716,10 @@ class TaskService:
 
         if section_values:
             sections = storage.resolve_task_body_sections(self.tasks_root)
-            task.body = _render_task_body(sections, section_values=section_values)
+            task.body = _replace_body_sections(task.body, sections, section_values)
 
         snapshot = self._snapshot_with(task)
         self._validate_and_persist_snapshot(snapshot)
-        storage.append_activity(task, "human", "update", "Task metadata updated")
-        return self._find_by_selector(task.metadata.task_id)
-
-    def log_activity(self, selector: str, note: str, actor: str = "unknown") -> Task:
-        task = self._find_by_selector(selector, include_trash=False)
-
-        cleaned_note = note.strip()
-        if not cleaned_note:
-            raise TaskValidationError("note is required")
-
-        cleaned_actor = actor.strip() or "unknown"
-        storage.append_activity(task, cleaned_actor, "update", cleaned_note)
         return self._find_by_selector(task.metadata.task_id)
 
     def rename_task(self, selector: str, new_task_name: str) -> Task:
@@ -712,7 +730,6 @@ class TaskService:
         task.metadata.task_name = new_task_name
         storage.move_task_dir(task, self.tasks_root, task.metadata.status, target_name=new_task_name)
         storage.write_task(task)
-        storage.append_activity(task, "human", "update", f"Task renamed to {new_task_name}")
 
         # Cross-task consistency pass: validates graph and recomputes blocked_by indexes.
         self._validate_and_persist_all()
@@ -724,7 +741,6 @@ class TaskService:
             storage.hard_delete(task.task_dir)
             return
 
-        storage.append_activity(task, "human", "update", "Task moved to trash")
         target = storage.unique_trash_path(self.tasks_root, task)
         task.task_dir.rename(target)
 

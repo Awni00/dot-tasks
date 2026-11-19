@@ -24,9 +24,12 @@ written at session end + body sections Summary / Done when / Outcome / Human rev
    written by the model directly, following the project README.
 2. **Drop `activity.md` and `log-activity`.** Frontmatter dates record the lifecycle. A project wanting
    a log says so in its README; the model appends to a file itself.
-3. **Workflow doc = `.tasks/README.md`** (fixed path, optional). `start` and `view` (the bind points;
-   resuming a doing task uses `view`) print the task folder and `Workflow: .tasks/README.md` when it
-   exists. `complete` moves the task and prints its new folder. No per-event messages.
+3. **Workflow doc = `.tasks/README.md`** (fixed path, optional). Only the AGENTS snippet and the skill
+   point to it ("This project's task workflow is in `.tasks/README.md`; read it before working on a
+   task."). The tool itself never mentions it: the workflow is project-wide, not per-task, and the tool
+   serves humans as well as agents. `start`/`view`/`complete` output and `view --json` stay as today;
+   `dot-tasks path` covers finding a task's folder. (Revised 2026-11-19; supersedes the earlier
+   "start/view print a pointer" decision and the configurable path-format idea.)
 4. **Body sections**: keep `settings.task_body_sections` unchanged. Fix the interactive `update` form
    (the only path that edits the body) so it replaces only the configured sections and keeps
    hand-added sections and their order; today it re-renders the body and drops them.
@@ -48,24 +51,20 @@ written at session end + body sections Summary / Done when / Outcome / Human rev
    Leave the untracked tasks and `tmp.txt` alone.
 1. **Core** (`src/dot_tasks/`):
    - `models.py`: remove `Task.activity_path`, `Task.plan_path`.
-   - `storage.py`: remove `append_activity`; add `workflow_doc_path(tasks_root)` (=`tasks_root/"README.md"`)
-     and `write_starter_readme_if_missing(tasks_root) -> bool` with the skeleton text.
+   - `storage.py`: remove `append_activity`; add `write_starter_readme_if_missing(tasks_root) -> bool` with the skeleton text.
    - `service.py`: drop activity touch/logging in `create_task`, `start_task`, `complete_task`,
      `update_task`, `rename_task`, `delete_task`; drop plan.md stub in `start_task`; delete
      `log_activity`. Add `_replace_body_sections(body, values)` (reuse the split logic of
      `_parse_body_sections`): replace content of matching `## ` sections in place, keep preamble and
      non-configured sections, append missing named sections at the end; use it in `update_task`.
-2. **CLI** (`cli.py`): remove `log-activity` command and its palette entry; `start`/`complete` print
-   folder (+ workflow pointer on start); add `path` command (selector or interactive picker like
+2. **CLI** (`cli.py`): remove `log-activity` command and its palette entry; add `path` command (selector or interactive picker like
    `start`); `init` calls `write_starter_readme_if_missing` and echoes the result; update help strings
    ("Move task to doing and initialize plan.md").
 3. **Render** (`render.py`): `_task_file_detail_state` treats only `task.md` as canonical and lists
-   every other entry (files and dirs like `sessions/`) as files; add the `Workflow:` line to plain and
-   rich detail output and a `workflow_doc` field to `view --json` (path or null).
+   every other entry (files and dirs like `sessions/`) as files.
 4. **Tests** (`tests/test_cli.py`, `test_render.py`, `test_storage.py`, `test_examples_demo.py`): delete
    log-activity/activity/plan-stub tests; update file-listing assertions. New tests, each commented:
    - create/start/complete write no activity.md or plan.md (tool writes only task.md);
-   - `start` and `view` print the workflow pointer iff `.tasks/README.md` exists;
    - `path` resolves by name and by id, errors on unknown task;
    - `init` writes the starter README once and never overwrites an existing one;
    - interactive `update` keeps a hand-added section and the order of others;
@@ -73,10 +72,11 @@ written at session end + body sections Summary / Done when / Outcome / Human rev
 5. **Agent-facing docs**:
    - `agent-tools/skills/dot-tasks/SKILL.md`: rewrite as a ~40-line reference: data model (folders,
      frontmatter, body sections), state/content split (state only via commands; edit content files
-     directly), refer to tasks by name/id (`dot-tasks path`), command list, and "if
-     `.tasks/README.md` exists, it defines this project's workflow; read it when binding to a task".
+     directly), refer to tasks by name/id (`dot-tasks path`), command list, and a plain statement: "This
+     project's task workflow is in `.tasks/README.md`; read it before working on a task."
      Drop spec/plan deliverables, triage rubric, readiness checks, decisions.md.
-   - `resources/agents/task-management-dot-tasks.md`: trigger + pointer (≈5 lines).
+   - `resources/agents/task-management-dot-tasks.md`: trigger + the same plain pointer to `.tasks/README.md` (≈5 lines); it is the only pointer, so
+     word it clearly.
 6. **User docs**: README (layout, typical workflow, commands table incl. `path`, removal of
    `log-activity`, new "Project workflow doc" section with a short example, "Migrating from 0.1"
    section); `examples/basic-demo/{README,AGENTS}.md` updated; `_version.py` → `0.2.0`.
@@ -86,7 +86,7 @@ written at session end + body sections Summary / Done when / Outcome / Human rev
 ## Verification
 - `source .venv/bin/activate && pytest` — all tests green.
 - Manual run in a scratch dir: `dot-tasks init --nointeractive` (README skeleton created),
-  `create x`, `start x` (prints folder + Workflow line, no plan.md), `view x`, `path x`,
+  `create x`, `start x` (no plan.md, no activity.md), `view x`, `path x`,
   interactive `update x` after hand-adding a section, `complete x`; `dot-tasks log-activity` →
   "No such command".
 - Run against this repo's `.tasks/` (`list all`, `view` on an old done task) to confirm legacy tasks

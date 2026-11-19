@@ -73,11 +73,11 @@ _COMMAND_PALETTE_META = {
     "view": _CommandPaletteMeta(section="Inspect", order=1),
     "tags": _CommandPaletteMeta(section="Inspect", order=2),
     "graph": _CommandPaletteMeta(section="Inspect", order=3),
+    "path": _CommandPaletteMeta(section="Inspect", order=4),
     "create": _CommandPaletteMeta(section="Lifecycle", order=0),
     "start": _CommandPaletteMeta(section="Lifecycle", order=1),
     "update": _CommandPaletteMeta(section="Lifecycle", order=2),
-    "log-activity": _CommandPaletteMeta(section="Lifecycle", order=3),
-    "complete": _CommandPaletteMeta(section="Lifecycle", order=4),
+    "complete": _CommandPaletteMeta(section="Lifecycle", order=3),
     "rename": _CommandPaletteMeta(section="Maintenance", order=0),
     "delete": _CommandPaletteMeta(section="Maintenance", order=1),
     "init": _CommandPaletteMeta(section="Setup", order=0, show_without_tasks_root=True),
@@ -663,6 +663,10 @@ def init_cmd(
                     f"due_dates_enabled={storage.DEFAULT_DUE_DATES_ENABLED})"
                 )
 
+        readme_path = storage.workflow_doc_path(svc.tasks_root)
+        if storage.write_starter_readme_if_missing(svc.tasks_root):
+            typer.echo(f"Created workflow doc: {readme_path}")
+
         if should_append_agents_snippet:
             status, target = _append_agents_snippet(
                 svc.tasks_root.parent,
@@ -835,7 +839,7 @@ def start_cmd(
     nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
 ) -> None:
-    """Move task to doing and initialize plan.md."""
+    """Move task to doing."""
 
     def _inner() -> None:
         svc = _service(tasks_root)
@@ -1040,6 +1044,32 @@ def view_cmd(
     _run_and_handle(_inner)
 
 
+@app.command("path")
+def path_cmd(
+    task_name: Annotated[str | None, typer.Argument(help="Task name or task_id")] = None,
+    nointeractive: NoInteractiveOption = False,
+    tasks_root: TasksRootOption = None,
+) -> None:
+    """Print the absolute path of a task folder."""
+
+    def _inner() -> None:
+        svc = _service(tasks_root)
+        interactive_enabled = _resolve_interactive_enabled(
+            svc.tasks_root,
+            nointeractive=nointeractive,
+        )
+        selector = _select_task_if_missing(
+            svc,
+            task_name,
+            "Select a task",
+            interactive_enabled=interactive_enabled,
+        )
+        task = svc.view_task(selector)
+        typer.echo(str(task.task_dir.resolve()))
+
+    _run_and_handle(_inner)
+
+
 @app.command("graph")
 def graph_cmd(
     mode: Annotated[Literal["tree", "layers"], typer.Option("--mode")] = "tree",
@@ -1193,41 +1223,6 @@ def update_cmd(
             section_values=local_section_values,
         )
         typer.echo(f"Updated: {task.metadata.task_name}")
-
-    _run_and_handle(_inner)
-
-
-@app.command("log-activity")
-def log_activity_cmd(
-    task_name: Annotated[str | None, typer.Argument(help="Task name or task_id")] = None,
-    note: Annotated[str | None, typer.Option("--note")] = None,
-    actor: Annotated[str, typer.Option("--actor")] = "unknown",
-    nointeractive: NoInteractiveOption = False,
-    tasks_root: TasksRootOption = None,
-) -> None:
-    """Append a manual activity note."""
-
-    def _inner() -> None:
-        svc = _service(tasks_root)
-        interactive_enabled = _resolve_interactive_enabled(
-            svc.tasks_root,
-            nointeractive=nointeractive,
-        )
-        selector = _select_task_if_missing(
-            svc,
-            task_name,
-            "Select a task to log activity",
-            interactive_enabled=interactive_enabled,
-        )
-
-        local_note = note
-        if local_note is None:
-            if not _can_prompt(interactive_enabled):
-                raise TaskValidationError("note is required in non-interactive mode")
-            local_note = _safe_prompt("note")
-
-        task = svc.log_activity(selector, local_note, actor=actor)
-        typer.echo(f"Logged activity: {task.metadata.task_name}")
 
     _run_and_handle(_inner)
 

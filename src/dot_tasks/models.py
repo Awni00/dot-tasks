@@ -52,14 +52,6 @@ class Task:
     def task_md_path(self) -> Path:
         return self.task_dir / "task.md"
 
-    @property
-    def activity_path(self) -> Path:
-        return self.task_dir / "activity.md"
-
-    @property
-    def plan_path(self) -> Path:
-        return self.task_dir / "plan.md"
-
 
 @dataclass(slots=True)
 class DependencyGraphNode:

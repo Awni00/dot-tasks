@@ -91,10 +91,6 @@ def _read_config(path: Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
 
-def _read_activity_lines(path: Path) -> list[str]:
-    return path.read_text(encoding="utf-8").splitlines()
-
-
 def _strip_osc8(text: str) -> str:
     return OSC8_LINK_RE.sub(r"\1", text)
 
@@ -620,7 +616,8 @@ def test_create_rejects_duplicate_name(tmp_path: Path) -> None:
     assert "already exists" in r2.output
 
 
-def test_create_writes_task_and_activity(tmp_path: Path) -> None:
+def test_create_writes_only_task_md(tmp_path: Path) -> None:
+    # Purpose: since 0.2.0 the tool writes only task.md (no activity.md); metadata comes from flags.
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
     result = runner.invoke(
@@ -640,8 +637,7 @@ def test_create_writes_task_and_activity(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0
     task_dir = _task_dir(root, "todo", "write-files")
-    assert (task_dir / "task.md").exists()
-    assert (task_dir / "activity.md").exists()
+    assert sorted(path.name for path in task_dir.iterdir()) == ["task.md"]
     meta, _ = _read_task_md(task_dir / "task.md")
     assert meta["task_name"] == "write-files"
     assert meta["priority"] == "p1"
@@ -930,7 +926,6 @@ def test_create_plain_noninteractive_output_has_no_osc8_links(
     assert str(task_dir) not in result.output
     assert str(task_dir / "task.md") not in result.output
     assert (task_dir / "task.md").exists()
-    assert (task_dir / "activity.md").exists()
 
 
 def test_start_blocks_unmet_dependencies_without_force(tmp_path: Path) -> None:
@@ -947,14 +942,21 @@ def test_start_blocks_unmet_dependencies_without_force(tmp_path: Path) -> None:
     assert "Unmet dependencies" in blocked.output
 
 
-def test_start_creates_plan_md(tmp_path: Path) -> None:
+def test_start_and_complete_add_no_files(tmp_path: Path) -> None:
+    # Purpose: since 0.2.0 start no longer creates plan.md and no command writes activity.md;
+    # the task folder holds only task.md unless the project adds files itself.
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
     runner.invoke(app, ["create", "plan-task", "--tasks-root", str(root)])
-    result = runner.invoke(app, ["start", "plan-task", "--tasks-root", str(root)])
-    assert result.exit_code == 0
+    started = runner.invoke(app, ["start", "plan-task", "--tasks-root", str(root)])
+    assert started.exit_code == 0
     doing_dir = _task_dir(root, "doing", "plan-task")
-    assert (doing_dir / "plan.md").exists()
+    assert sorted(path.name for path in doing_dir.iterdir()) == ["task.md"]
+
+    completed = runner.invoke(app, ["complete", "plan-task", "--tasks-root", str(root)])
+    assert completed.exit_code == 0
+    done_dir = _task_dir(root, "done", "plan-task")
+    assert sorted(path.name for path in done_dir.iterdir()) == ["task.md"]
 
 
 def test_complete_moves_and_sets_date(tmp_path: Path) -> None:
@@ -1052,23 +1054,27 @@ def test_view_renders_dependencies_as_name_and_id(tmp_path: Path) -> None:
     assert f"depends_on: dep-view ({dep_id}) [todo]" in output
     assert "blocked_by: -" in output
     assert f"dir: {task_dir.name}" in output
-    assert "files: task.md | activity.md | plan.md (missing)" in output
-    assert "extra:" not in output
+    assert "files: task.md\n" in output
 
 
-def test_view_renders_plan_as_present_for_doing_task(tmp_path: Path) -> None:
+def test_view_lists_project_files_and_dirs_alongside_task_md(tmp_path: Path) -> None:
+    # Purpose: files the model adds to a task folder (e.g. plan.md, sessions/) are listed after
+    # task.md, all the same way, with directories marked by a trailing slash.
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
     runner.invoke(app, ["create", "doing-view", "--tasks-root", str(root)])
     runner.invoke(app, ["start", "doing-view", "--tasks-root", str(root)])
+    doing_dir = _task_dir(root, "doing", "doing-view")
+    (doing_dir / "plan.md").write_text("# Plan\n", encoding="utf-8")
+    (doing_dir / "sessions").mkdir()
+    (doing_dir / "sessions" / "2026-11-19-abc.md").write_text("# Session\n", encoding="utf-8")
 
     result = runner.invoke(app, ["view", "doing-view", "--tasks-root", str(root)])
     assert result.exit_code == 0
     output = _strip_osc8(result.output)
     task_dir = _task_dir(root, "doing", "doing-view").resolve()
     assert f"dir: {task_dir.name}" in output
-    assert "files: task.md | activity.md | plan.md" in output
-    assert "extra:" not in output
+    assert "files: task.md | plan.md | sessions/" in output
 
 
 def test_view_non_tty_plain_output_has_no_osc8_sequences(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -2008,8 +2014,8 @@ def test_command_palette_sections_group_core_workflow_commands() -> None:
     sections = cli._command_palette_sections(has_tasks_root=True)
 
     assert [(section.title, [command.name for command in section.commands]) for section in sections] == [
-        ("Inspect", ["list", "view", "tags", "graph"]),
-        ("Lifecycle", ["create", "start", "update", "log-activity", "complete"]),
+        ("Inspect", ["list", "view", "tags", "graph", "path"]),
+        ("Lifecycle", ["create", "start", "update", "complete"]),
         ("Maintenance", ["rename", "delete"]),
         ("Setup", ["init", "add-agents-snippet", "install-skill"]),
     ]
@@ -2275,21 +2281,6 @@ def test_update_interactive_form_preserves_dependencies_when_not_replacing(
     assert meta["depends_on"] == [dep_a_id]
 
 
-def test_update_metadata_appends_default_activity_note(tmp_path: Path) -> None:
-    root = tmp_path / ".tasks"
-    runner.invoke(app, ["init", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "update-default-note", "--tasks-root", str(root)])
-
-    result = runner.invoke(
-        app,
-        ["update", "update-default-note", "--priority", "p1", "--tasks-root", str(root)],
-    )
-    assert result.exit_code == 0
-    activity_lines = _read_activity_lines(_task_dir(root, "todo", "update-default-note") / "activity.md")
-    assert len(activity_lines) >= 2
-    assert "| human | update | Task metadata updated" in activity_lines[-1]
-
-
 def test_update_accepts_spec_readiness(tmp_path: Path) -> None:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
@@ -2331,80 +2322,6 @@ def test_update_accepts_status(tmp_path: Path) -> None:
     meta, _ = _read_task_md(_task_dir(root, "doing", "update-status-test") / "task.md")
     assert meta["status"] == "doing"
     assert meta["date_started"] is not None
-
-
-def test_log_activity_defaults_actor_to_unknown(tmp_path: Path) -> None:
-    root = tmp_path / ".tasks"
-    runner.invoke(app, ["init", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "log-default-actor", "--tasks-root", str(root)])
-
-    result = runner.invoke(
-        app,
-        [
-            "log-activity",
-            "log-default-actor",
-            "--note",
-            "Progress from manual log",
-            "--tasks-root",
-            str(root),
-        ],
-    )
-    assert result.exit_code == 0
-    assert "Logged activity: log-default-actor" in result.output
-    activity_lines = _read_activity_lines(_task_dir(root, "todo", "log-default-actor") / "activity.md")
-    assert "| unknown | update | Progress from manual log" in activity_lines[-1]
-
-
-def test_log_activity_uses_custom_actor(tmp_path: Path) -> None:
-    root = tmp_path / ".tasks"
-    runner.invoke(app, ["init", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "log-custom-actor", "--tasks-root", str(root)])
-
-    result = runner.invoke(
-        app,
-        [
-            "log-activity",
-            "log-custom-actor",
-            "--note",
-            "agent progress",
-            "--actor",
-            "agent",
-            "--tasks-root",
-            str(root),
-        ],
-    )
-    assert result.exit_code == 0
-    activity_lines = _read_activity_lines(_task_dir(root, "todo", "log-custom-actor") / "activity.md")
-    assert "| agent | update | agent progress" in activity_lines[-1]
-
-
-def test_log_activity_interactive_prompts_for_note(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    root = tmp_path / ".tasks"
-    runner.invoke(app, ["init", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "log-prompted-note", "--tasks-root", str(root)])
-    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
-    monkeypatch.setattr("dot_tasks.cli._safe_prompt", lambda message: "Prompted note")
-
-    result = runner.invoke(
-        app,
-        ["log-activity", "log-prompted-note", "--tasks-root", str(root)],
-    )
-    assert result.exit_code == 0
-    activity_lines = _read_activity_lines(_task_dir(root, "todo", "log-prompted-note") / "activity.md")
-    assert "| unknown | update | Prompted note" in activity_lines[-1]
-
-
-def test_log_activity_nointeractive_requires_note(tmp_path: Path) -> None:
-    root = tmp_path / ".tasks"
-    runner.invoke(app, ["init", "--tasks-root", str(root)])
-    runner.invoke(app, ["create", "log-missing-note", "--tasks-root", str(root)])
-
-    result = runner.invoke(
-        app,
-        ["log-activity", "log-missing-note", "--nointeractive", "--tasks-root", str(root)],
-    )
-    assert result.exit_code == 1
-    assert "Error: note is required in non-interactive mode" in result.output
 
 
 def test_create_interactive_cancel_prints_canceled_and_exits_1(
@@ -2656,3 +2573,101 @@ def test_update_interactive_form_retries_on_circular_dependency(
     result = runner.invoke(app, ["update", "task-a", "--tasks-root", str(root)])
     assert result.exit_code == 0
     assert call_count == 2
+
+
+def test_path_prints_absolute_task_folder_by_name_and_id(tmp_path: Path) -> None:
+    # Purpose: `path` resolves a task by name or id to its absolute folder, printed alone on
+    # stdout so `cd "$(dot-tasks path x)"` works; it follows the folder as the status changes.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "find-me", "--tasks-root", str(root)])
+    meta, _ = _read_task_md(_task_md_path(root, "todo", "find-me"))
+
+    by_name = runner.invoke(app, ["path", "find-me", "--tasks-root", str(root)])
+    runner.invoke(app, ["start", "find-me", "--tasks-root", str(root)])
+    by_id = runner.invoke(app, ["path", meta["task_id"], "--tasks-root", str(root)])
+
+    assert by_name.exit_code == 0
+    assert by_name.stdout.strip() == str(_task_dir(root, "todo", "find-me").resolve())
+    assert by_id.exit_code == 0
+    assert by_id.stdout.strip() == str(_task_dir(root, "doing", "find-me").resolve())
+
+
+def test_path_errors_for_unknown_task(tmp_path: Path) -> None:
+    # Purpose: an unknown selector fails with an error instead of printing a path.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["path", "no-such-task", "--tasks-root", str(root)])
+
+    assert result.exit_code == 1
+    assert "Task not found: no-such-task" in result.output
+
+
+def test_init_writes_starter_workflow_doc_once(tmp_path: Path) -> None:
+    # Purpose: init creates the starter .tasks/README.md (the project workflow doc) when missing
+    # and never overwrites one the project has written.
+    root = tmp_path / ".tasks"
+
+    first = runner.invoke(app, ["init", "--nointeractive", "--tasks-root", str(root)])
+    readme = root / "README.md"
+    assert first.exit_code == 0
+    assert "Created workflow doc:" in first.output
+    assert readme.read_text(encoding="utf-8") == storage.STARTER_README
+
+    readme.write_text("# Our workflow\n", encoding="utf-8")
+    second = runner.invoke(app, ["init", "--nointeractive", "--tasks-root", str(root)])
+    assert second.exit_code == 0
+    assert "Created workflow doc:" not in second.output
+    assert readme.read_text(encoding="utf-8") == "# Our workflow\n"
+
+
+def test_log_activity_command_is_removed(tmp_path: Path) -> None:
+    # Purpose: 0.2.0 drops activity logging; the old command must no longer exist.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["log-activity", "x", "--note", "n", "--tasks-root", str(root)])
+
+    assert result.exit_code != 0
+    assert "No such command" in result.output
+
+
+def test_update_sections_keeps_hand_added_sections_and_order(tmp_path: Path) -> None:
+    # Purpose: the model edits task.md bodies directly; updating configured sections (the
+    # interactive update form) must replace only those sections and keep added ones in place.
+    from dot_tasks.service import TaskService
+
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "edited-body", "--summary", "old", "--tasks-root", str(root)])
+    task_md = _task_md_path(root, "todo", "edited-body")
+    front = task_md.read_text(encoding="utf-8").split("\n---\n", 1)[0]
+    task_md.write_text(
+        front
+        + "\n---\n\nIntro line.\n\n## Summary\n- old\n\n## Outcome\n- shipped\n\n## Notes\n- keep me\n",
+        encoding="utf-8",
+    )
+
+    TaskService(root).update_task("edited-body", section_values={"Summary": "- new"})
+
+    _, body = _read_task_md(task_md)
+    assert body == "\nIntro line.\n\n## Summary\n- new\n\n## Outcome\n- shipped\n\n## Notes\n- keep me\n"
+
+
+def test_update_sections_appends_configured_section_missing_from_body(tmp_path: Path) -> None:
+    # Purpose: a configured section absent from the body (e.g. added to config later) is
+    # appended at the end when the form supplies it.
+    from dot_tasks.service import TaskService
+
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "short-body", "--summary", "s", "--tasks-root", str(root)])
+
+    TaskService(root).update_task(
+        "short-body",
+        section_values={"Summary": "- s", "Outcome": "- done"},
+    )
+
+    _, body = _read_task_md(_task_md_path(root, "todo", "short-body"))
+    assert body.endswith("## Summary\n- s\n\n## Outcome\n- done\n")

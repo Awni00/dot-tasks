@@ -124,6 +124,49 @@ def ensure_layout(tasks_root: Path) -> None:
         (tasks_root / name).mkdir(parents=True, exist_ok=True)
 
 
+STARTER_README = """\
+# Task workflow
+
+How this project tracks work with dot-tasks. Agents are pointed here from AGENTS.md /
+CLAUDE.md and the dot-tasks skill, so keep it short.
+
+## When to create a task
+- TODO: e.g. work spanning sessions or needing a record.
+
+## Files in a task folder
+- `task.md`: metadata (changed only through dot-tasks commands) and the task description
+  (edit directly).
+- TODO: other files tasks keep, e.g. `plan.md`, `sessions/<date>-<id>.md`.
+- Templates for task files, if any: `.tasks/templates/`.
+
+## Wrapping up a session
+- TODO: what to record before ending a work session.
+
+## Before completing a task
+- TODO: what must be filled in before `dot-tasks complete`.
+
+## Tags
+- TODO: project-specific tags and their meaning.
+
+## Referring to tasks
+- Cite tasks by name or id, never by folder path (folders move with status).
+  `dot-tasks path <task>` resolves one.
+"""
+
+
+def workflow_doc_path(tasks_root: Path) -> Path:
+    return tasks_root / "README.md"
+
+
+def write_starter_readme_if_missing(tasks_root: Path) -> bool:
+    """Write the starter workflow doc unless `.tasks/README.md` already exists."""
+    path = workflow_doc_path(tasks_root)
+    if path.exists():
+        return False
+    path.write_text(STARTER_README, encoding="utf-8")
+    return True
+
+
 def config_path(tasks_root: Path) -> Path:
     return tasks_root / "config.yaml"
 
@@ -661,13 +704,6 @@ def write_task_if_changed(task: Task) -> bool:
 
 def _normalize_body(body: str) -> str:
     return body.lstrip("\n").rstrip()
-
-
-def append_activity(task: Task, actor: str, kind: str, note: str, when: dt.datetime | None = None) -> None:
-    stamp = (when or dt.datetime.now()).strftime("%Y-%m-%d %H:%M")
-    line = f"{stamp} | {actor} | {kind} | {note}\n"
-    with task.activity_path.open("a", encoding="utf-8") as fh:
-        fh.write(line)
 
 
 def iter_task_dirs(tasks_root: Path, include_trash: bool = False) -> list[Path]:

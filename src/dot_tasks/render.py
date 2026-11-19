@@ -665,82 +665,49 @@ def _rich_link(path: Path, label: str):
     return text
 
 
-def _task_file_detail_state(
-    task: Task,
-) -> tuple[Path, list[tuple[Path, bool]], list[Path] | None]:
-    task_dir = task.task_dir.resolve()
-    canonical_files = [
-        task.task_md_path,
-        task.activity_path,
-        task.plan_path,
-    ]
-    canonical_names = {path.name for path in canonical_files}
-    canonical_rows = [(path.resolve(), path.exists()) for path in canonical_files]
+def _task_file_detail_state(task: Task) -> tuple[Path, list[tuple[Path, str]]]:
+    """Return the task folder and its entries as (path, label), task.md first.
 
+    Every entry in the folder is listed the same way; directories get a trailing ``/``.
+    """
+    task_dir = task.task_dir.resolve()
+    task_md = task.task_md_path.resolve()
+    entries: list[tuple[Path, str]] = [(task_md, task_md.name)]
     try:
-        extras = sorted(
-            path.resolve()
-            for path in task.task_dir.iterdir()
-            if path.name not in canonical_names
+        others = sorted(
+            path.resolve() for path in task.task_dir.iterdir() if path.name != task_md.name
         )
     except OSError:
-        return task_dir, canonical_rows, None
-    return task_dir, canonical_rows, extras
+        others = []
+    for path in others:
+        entries.append((path, f"{path.name}/" if path.is_dir() else path.name))
+    return task_dir, entries
 
 
 def _task_file_detail_lines_plain(task: Task, *, enable_links: bool) -> list[str]:
-    task_dir, canonical_rows, extras = _task_file_detail_state(task)
+    task_dir, entries = _task_file_detail_state(task)
     lines = [f"dir: {_plain_link(task_dir, task_dir.name) if enable_links else task_dir.name}"]
-
-    file_tokens: list[str] = []
-    for path, exists in canonical_rows:
-        if exists:
-            file_tokens.append(_plain_link(path, path.name) if enable_links else path.name)
-        else:
-            file_tokens.append(f"{path.name} (missing)")
-    lines.append(f"files: {' | '.join(file_tokens)}")
-
-    if extras is None:
-        lines.append("extra: (unavailable)")
-    elif extras:
-        lines.append(
-            "extra: "
-            + " | ".join(
-                _plain_link(path, path.name) if enable_links else path.name
-                for path in extras
-            )
+    lines.append(
+        "files: "
+        + " | ".join(
+            _plain_link(path, label) if enable_links else label for path, label in entries
         )
+    )
     return lines
 
 
 def _task_file_detail_lines_rich(task: Task):
     from rich.text import Text
 
-    task_dir, canonical_rows, extras = _task_file_detail_state(task)
+    task_dir, entries = _task_file_detail_state(task)
     first_line = Text("dir: ")
     first_line.append_text(_rich_link(task_dir, task_dir.name))
-    lines = [first_line]
-
     files_line = Text("files: ")
-    for index, (path, exists) in enumerate(canonical_rows):
+    for index, (path, label) in enumerate(entries):
         if index > 0:
             files_line.append(" | ")
-        if exists:
-            files_line.append_text(_rich_link(path, path.name))
-        else:
-            files_line.append(f"{path.name} (missing)")
-    lines.append(files_line)
-
-    if extras is None:
-        lines.append(Text("extra: (unavailable)"))
-    elif extras:
-        extra_line = Text("extra: ")
-        for index, path in enumerate(extras):
-            if index > 0:
-                extra_line.append(" | ")
-            extra_line.append_text(_rich_link(path, path.name))
-        lines.append(extra_line)
-    return lines
+        files_line.append_text(_rich_link(path, label))
+    return [first_line, files_line]
 
 
 def render_task_detail_plain(

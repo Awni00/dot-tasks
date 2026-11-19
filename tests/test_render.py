@@ -501,6 +501,8 @@ def test_render_dependency_graph_layers_rich_contains_updated_l0_heading() -> No
 
 
 def test_render_task_detail_plain_header_first_layout(tmp_path: Path) -> None:
+    # Purpose: plain detail output keeps its header-first line order, and lists task.md first,
+    # then every other file in the folder in name order.
     task_dir = tmp_path / "build-nightly-report"
     task_dir.mkdir()
     (task_dir / "task.md").write_text("task", encoding="utf-8")
@@ -535,12 +537,13 @@ def test_render_task_detail_plain_header_first_layout(tmp_path: Path) -> None:
     assert lines[4] == "depends_on: add-json-export (t-20260205-001) [todo]"
     assert lines[5] == "blocked_by: downstream-task (t-20260207-001) [doing]"
     assert lines[6] == f"dir: {task_dir.name}"
-    assert lines[7] == "files: task.md | activity.md | plan.md"
-    assert lines[8] == "extra: notes.txt"
+    assert lines[7] == "files: task.md | activity.md | notes.txt | plan.md"
     assert "## Summary" in output
 
 
 def test_render_task_detail_plain_uses_dash_for_empty_fields(tmp_path: Path) -> None:
+    # Purpose: empty metadata renders as "-", and only files that exist are listed and linked
+    # (no "(missing)" placeholders for files the tool no longer creates).
     task_dir = tmp_path / "build-nightly-report"
     task_dir.mkdir()
     (task_dir / "task.md").write_text("task", encoding="utf-8")
@@ -567,8 +570,8 @@ def test_render_task_detail_plain_uses_dash_for_empty_fields(tmp_path: Path) -> 
     assert "depends_on: -" in output
     assert "blocked_by: -" in output
     assert f"dir: {task_dir.name}" in output
-    assert "files: task.md | activity.md | plan.md (missing)" in output
-    assert "extra:" not in output
+    assert "files: task.md | activity.md\n" in output
+    assert "(missing)" not in output
     assert "(empty)" in output
     linked_labels = OSC8_LINK_RE.findall(raw_output)
     assert "task.md" in linked_labels
@@ -602,7 +605,10 @@ def test_render_task_detail_plain_optionally_shows_due_date(tmp_path: Path) -> N
     assert "due_date: 2026-08-15" in visible
 
 
-def test_render_task_detail_plain_extra_unavailable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_render_task_detail_plain_lists_task_md_when_folder_unreadable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Purpose: if the task folder cannot be listed, view still renders and shows task.md.
     task_dir = tmp_path / "build-nightly-report"
     task_dir.mkdir()
     (task_dir / "task.md").write_text("task", encoding="utf-8")
@@ -632,11 +638,11 @@ def test_render_task_detail_plain_extra_unavailable(tmp_path: Path, monkeypatch:
     monkeypatch.setattr(Path, "iterdir", _broken_iterdir)
     output = render.render_task_detail_plain(task, [], [], 0, enable_links=False)
 
-    assert "files: task.md | activity.md | plan.md" in output
-    assert "extra: (unavailable)" in output
+    assert "files: task.md\n" in output
 
 
 def test_render_task_detail_rich_header_first_layout(tmp_path: Path) -> None:
+    # Purpose: rich detail output has the same layout and file listing as plain output.
     pytest.importorskip("rich")
     from rich.console import Console
 

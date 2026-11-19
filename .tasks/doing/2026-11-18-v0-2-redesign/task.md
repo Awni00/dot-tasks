@@ -1,9 +1,9 @@
 ---
 task_id: t-20261118-J3EK
 task_name: v0-2-redesign
-status: todo
+status: doing
 date_created: '2026-11-18'
-date_started: null
+date_started: '2026-11-19'
 date_completed: null
 due_date: null
 priority: p1
