@@ -14,6 +14,7 @@ from dot_tasks.cli import app
 
 
 runner = CliRunner()
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 OSC8_LINK_RE = re.compile(r"\x1b\]8;;[^\x1b]*\x1b\\(.*?)\x1b\]8;;\x1b\\")
 
 
@@ -630,11 +631,15 @@ def test_add_agents_snippet_prompt_decline_cancels(monkeypatch: pytest.MonkeyPat
     assert "Canceled." in result.output
 
 
-def test_add_agents_snippet_without_tasks_root_fails() -> None:
-    with runner.isolated_filesystem():
-        result = runner.invoke(app, ["add-agents-snippet", "--nointeractive"])
-        assert result.exit_code == 1
-        assert "Run 'dot-tasks init' first." in result.output
+def test_add_agents_snippet_without_tasks_root_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Purpose: outside any project with .tasks/, add-agents-snippet fails and points to init.
+    # (monkeypatch.chdir instead of CliRunner.isolated_filesystem, which Typer 0.29 removed.)
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, ["add-agents-snippet", "--nointeractive"])
+    assert result.exit_code == 1
+    assert "Run 'dot-tasks init' first." in result.output
 
 
 def test_create_rejects_duplicate_name(tmp_path: Path) -> None:
@@ -1959,7 +1964,9 @@ def test_list_invalid_column_config_warns_and_uses_defaults(
     assert captured_columns == [_default_columns()]
 
 
-def test_subdirectory_discovers_root(tmp_path: Path) -> None:
+def test_subdirectory_discovers_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # Purpose: commands run from a nested folder find the project's .tasks/ upward and say
+    # which root they use.
     repo = tmp_path / "repo"
     nested = repo / "a" / "b"
     nested.mkdir(parents=True)
@@ -1967,8 +1974,8 @@ def test_subdirectory_discovers_root(tmp_path: Path) -> None:
     runner.invoke(app, ["init", "--tasks-root", str(root)])
     runner.invoke(app, ["create", "root-task", "--tasks-root", str(root)])
 
-    with runner.isolated_filesystem(temp_dir=str(nested)):
-        result = runner.invoke(app, ["list"])
+    monkeypatch.chdir(nested)
+    result = runner.invoke(app, ["list"])
     assert result.exit_code == 0
     assert "Using tasks root:" in result.output
 
@@ -2051,15 +2058,15 @@ def test_no_args_interactive_runs_selected_command(monkeypatch: pytest.MonkeyPat
         _choose_command,
     )
 
-    with runner.isolated_filesystem(temp_dir=str(tmp_path)):
-        result = runner.invoke(app, [])
-        assert result.exit_code == 0
-        assert captured_sections == [[("Setup", ["init", "add-agents-snippet", "install-skill"])]]
-        assert "Initialized tasks root:" in result.output
-        assert (Path(".tasks") / "todo").is_dir()
-        cfg = _read_config(Path(".tasks") / "config.yaml")
-        assert cfg["settings"]["interactive_enabled"] is True
-        assert cfg["settings"]["show_banner"] is True
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(app, [])
+    assert result.exit_code == 0
+    assert captured_sections == [[("Setup", ["init", "add-agents-snippet", "install-skill"])]]
+    assert "Initialized tasks root:" in result.output
+    assert (Path(".tasks") / "todo").is_dir()
+    cfg = _read_config(Path(".tasks") / "config.yaml")
+    assert cfg["settings"]["interactive_enabled"] is True
+    assert cfg["settings"]["show_banner"] is True
 
 
 def test_init_interactive_cancel_exits_1(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -2723,8 +2730,9 @@ def test_task_not_found_suggests_close_names(tmp_path: Path) -> None:
 
 
 def test_help_groups_commands_like_the_picker() -> None:
-    # Purpose: --help lists commands in the picker's sections and order.
-    output = runner.invoke(app, ["--help"]).output
+    # Purpose: --help lists commands in the picker's sections and order. Colour codes are
+    # stripped: Rich turns colour on under GitHub Actions.
+    output = ANSI_RE.sub("", runner.invoke(app, ["--help"]).output)
     positions = [output.index(name) for name in ("Inspect", "Lifecycle", "Maintenance", "Setup")]
     assert positions == sorted(positions)
     assert output.index(" list ") < output.index(" create ") < output.index(" rename ") < output.index(" init ")
