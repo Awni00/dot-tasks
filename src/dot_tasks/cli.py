@@ -630,15 +630,13 @@ def init_cmd(
             )
             raw_settings = storage.read_config(svc.tasks_root).get("settings")
             raw_settings = raw_settings if isinstance(raw_settings, dict) else {}
-            current_field_entries = raw_settings.get("fields") if isinstance(raw_settings.get("fields"), list) else None
+            current_field_entries = storage.effective_field_entries(raw_settings) if cfg_path.exists() else None
             if current_field_entries is not None:
                 default_field_names = [
                     field_def.name
                     for field_def in storage.parse_field_entries(current_field_entries)
                     if field_def.name in storage.BUILTIN_FIELDS
                 ]
-            elif cfg_path.exists():
-                default_field_names = list(storage.DEFAULT_FIELD_NAMES)
             else:
                 default_field_names = list(storage.INIT_DEFAULT_FIELD_NAMES)
             current_columns = storage.resolve_list_table_columns(
@@ -930,6 +928,11 @@ def list_cmd(
             untagged_only=untagged,
             field_filters=service.parse_filters(filter_args),
         )
+        unmet_counts = {task.metadata.task_id: svc.dependency_health(task)[0] for task in tasks}
+        if as_json:
+            # JSON has every field; table columns (and their config warnings) do not apply.
+            typer.echo(render.render_task_list_json(tasks, unmet_counts))
+            return
         field_defs = svc.field_defs
         list_columns = storage.resolve_list_table_columns(
             svc.tasks_root,
@@ -939,10 +942,7 @@ def list_cmd(
         if tasks and all(task.metadata.status == "completed" for task in tasks):
             list_columns = storage.apply_done_list_defaults(list_columns, field_defs)
 
-        unmet_counts = {task.metadata.task_id: svc.dependency_health(task)[0] for task in tasks}
-        if as_json:
-            typer.echo(render.render_task_list_json(tasks, unmet_counts))
-        elif _can_render_rich_list_output():
+        if _can_render_rich_list_output():
             _print_rich(render.render_task_list_rich(tasks, unmet_counts, list_columns, field_defs))
         else:
             typer.echo(render.render_task_list_plain(tasks, unmet_counts, list_columns, field_defs))

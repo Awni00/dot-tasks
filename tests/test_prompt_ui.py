@@ -1427,3 +1427,18 @@ def test_update_form_cancel_on_text_field_returns_none(monkeypatch: pytest.Monke
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
     monkeypatch.setattr(prompt_ui, "_safe_prompt", lambda *args, **kwargs: None)
     assert prompt_ui.update_form(_task("alpha"), dependency_options=[]) is None
+
+
+def test_init_config_form_keeps_removed_columns_for_legacy_configs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Purpose: with a 0.1 config's effective fields passed as current entries, re-running init
+    # does not re-add columns the user removed (fields are not "newly enabled").
+    captured, _ = _init_form(
+        monkeypatch,
+        current_field_entries=list(storage.DEFAULT_FIELD_NAMES),
+        default_field_names=list(storage.DEFAULT_FIELD_NAMES),
+        default_list_column_names=["task_name"],
+    )
+
+    assert captured["column_defaults"] == ["task_name"]

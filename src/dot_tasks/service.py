@@ -92,6 +92,13 @@ def parse_filters(tokens: Iterable[str]) -> dict[str, list[str | None]]:
     return filters
 
 
+def scalar_text(value: object) -> str | None:
+    """Canonical text of a stored scalar (YAML may load `2` as an int); None stays None."""
+    if value is None or isinstance(value, (list, dict)):
+        return None if value is None else str(value)
+    return str(value)
+
+
 def check_field_value(field_def: FieldDef, value: object) -> str | None:
     """Return the normalized value, or raise ValueError with a reason."""
     if value is None:
@@ -127,6 +134,7 @@ class TaskService:
         self.tasks_root = tasks_root.resolve()
         self.warn = warn
         self._field_defs: list[FieldDef] | None = None
+        self._field_values_checked = False
 
     @property
     def field_defs(self) -> list[FieldDef]:
@@ -139,10 +147,16 @@ class TaskService:
         return next((field_def for field_def in self.field_defs if field_def.name == name), None)
 
     def _warn_invalid_field_values(self, tasks: Iterable[Task]) -> None:
-        """Report stored values that do not fit their configured field; never fail."""
-        if self.warn is None:
+        """Report stored values that do not fit their configured field; never fail.
+
+        Runs once per service (one command); trashed tasks are not reported.
+        """
+        if self.warn is None or self._field_values_checked:
             return
+        self._field_values_checked = True
         for task in tasks:
+            if task.task_dir.parent.name == "trash":
+                continue
             for field_def in self.field_defs:
                 value = task.metadata.fields.get(field_def.name)
                 try:
@@ -288,15 +302,6 @@ class TaskService:
         for node in graph:
             dfs(node, [])
 
-        # `blocks` (tasks that depend on this one) is derived, never stored.
-        blocks: dict[str, list[str]] = {task_id: [] for task_id in graph}
-        for task_id, deps in graph.items():
-            for dep in deps:
-                blocks[dep].append(task_id)
-
-        for task in tasks:
-            task.metadata.blocks = sorted(blocks[task.metadata.task_id])
-
     def check_circular_dependencies(self, task_id: str | None, extra_depends_on: list[str]) -> None:
         """Validate if adding extra_depends_on creates a cycle."""
         if not extra_depends_on:
@@ -387,7 +392,7 @@ class TaskService:
             tasks = [task for task in tasks if task.metadata.status in status_filter]
         for key, accepted in filters.items():
             # Same key repeated: any of its values; different keys: all must match.
-            tasks = [task for task in tasks if task.metadata.fields.get(key) in accepted]
+            tasks = [task for task in tasks if scalar_text(task.metadata.fields.get(key)) in accepted]
 
         include_tag_set = set(_normalize_tags(include_tags))
         exclude_tag_set = set(_normalize_tags(exclude_tags))
@@ -661,8 +666,19 @@ class TaskService:
         task = self._find_by_selector(selector, include_trash=False)
         if status is not None and status not in VALID_STATUSES:
             raise TaskValidationError(f"Invalid status: {status}")
-        # Validate assignments before anything moves on disk.
+        # Validate everything (assignments, dependencies, graph) before anything moves on disk.
         self._set_field_values(task.metadata, field_values or {})
+        if replace_tags:
+            task.metadata.tags = _normalize_tags(tags)
+        elif tags:
+            task.metadata.tags = _normalize_tags([*task.metadata.tags, *list(tags)])
+        if clear_depends_on:
+            task.metadata.depends_on = []
+        if depends_on:
+            dep_ids = self._resolve_dependency_refs(depends_on)
+            task.metadata.depends_on = sorted(set([*task.metadata.depends_on, *dep_ids]))
+        snapshot = self._snapshot_with(task)
+        self._validate_graph(snapshot)
 
         if status is not None and status != task.metadata.status:
             storage.move_task_dir(task, self.tasks_root, status)
@@ -680,18 +696,6 @@ class TaskService:
                 if not task.metadata.date_completed:
                     task.metadata.date_completed = _today()
 
-        if replace_tags:
-            task.metadata.tags = _normalize_tags(tags)
-        elif tags:
-            task.metadata.tags = _normalize_tags([*task.metadata.tags, *list(tags)])
-
-        if clear_depends_on:
-            task.metadata.depends_on = []
-        if depends_on:
-            dep_ids = self._resolve_dependency_refs(depends_on)
-            task.metadata.depends_on = sorted(set([*task.metadata.depends_on, *dep_ids]))
-
-        snapshot = self._snapshot_with(task)
         self._validate_and_persist_snapshot(snapshot)
         return self._find_by_selector(task.metadata.task_id)
 

@@ -181,7 +181,9 @@ def test_init_interactive_passes_legacy_field_defaults_to_form(
     monkeypatch.setattr("dot_tasks.cli.init_config_form", _form)
     runner.invoke(app, ["init", "--tasks-root", str(root)])
 
-    assert captured["current_field_entries"] is None
+    # The legacy config's effective fields are passed as current entries, so init neither
+    # treats them as newly enabled nor re-adds columns the user removed.
+    assert captured["current_field_entries"] == list(storage.DEFAULT_FIELD_NAMES)
     assert captured["default_field_names"] == list(storage.DEFAULT_FIELD_NAMES)
     assert captured["default_list_column_names"] == ["task_name"]
 
@@ -2545,3 +2547,106 @@ def test_hand_added_frontmatter_keys_survive_updates(tmp_path: Path) -> None:
     assert result.exit_code == 0
     meta, _ = _read_task_md(task_md)
     assert meta["venue"] == "NeurIPS" and meta["priority"] == "p0"
+
+
+def test_init_interactive_respects_legacy_disabled_due_dates(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Purpose: a 0.1 config with due dates disabled must not get due_date preselected when
+    # init is re-run (accepting the defaults would otherwise turn due dates back on).
+    root = tmp_path / ".tasks"
+    root.mkdir()
+    (root / "config.yaml").write_text("settings:\n  due_dates:\n    enabled: false\n", encoding="utf-8")
+    captured: dict = {}
+
+    def _form(**kwargs):
+        captured.update(kwargs)
+        return None
+
+    monkeypatch.setattr("dot_tasks.cli._can_interact", lambda: True)
+    monkeypatch.setattr("dot_tasks.cli.init_config_form", _form)
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+
+    assert captured["default_field_names"] == ["priority", "effort", "owner"]
+
+
+def test_update_with_bad_dependency_does_not_move_the_task(tmp_path: Path) -> None:
+    # Purpose: dependency resolution and cycle checks run before a status change moves the
+    # folder, so a failing update leaves the task (folder and status) as it was.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "a", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "b", "--depends-on", "a", "--tasks-root", str(root)])
+
+    missing = runner.invoke(
+        app, ["update", "a", "--status", "doing", "--depends-on", "nope", "--tasks-root", str(root)]
+    )
+    cycle = runner.invoke(
+        app, ["update", "a", "--status", "doing", "--depends-on", "b", "--tasks-root", str(root)]
+    )
+
+    assert missing.exit_code == 1 and "Task not found: nope" in missing.output
+    assert cycle.exit_code == 1 and "Dependency cycle detected" in cycle.output
+    meta, _ = _read_task_md(_task_md_path(root, "todo", "a"))
+    assert meta["status"] == "todo"
+    assert not list((root / "doing").iterdir())
+
+
+def test_custom_timestamps_and_nested_dates_survive_and_serialize(tmp_path: Path) -> None:
+    # Purpose: hand-added keys holding a timestamp or a nested date are written back unchanged
+    # (no truncation to a date) and do not break JSON output.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "stamped", "--tasks-root", str(root)])
+    task_md = _task_md_path(root, "todo", "stamped")
+    custom = "reviewed_at: 2026-03-01 14:30:00\nreview:\n  at: 2026-01-01\n"
+    task_md.write_text(task_md.read_text(encoding="utf-8").replace("\n---\n", "\n" + custom + "---\n", 1), encoding="utf-8")
+
+    updated = runner.invoke(app, ["update", "stamped", "priority=p1", "--tasks-root", str(root)])
+    listed = runner.invoke(app, ["list", "--json", "--tasks-root", str(root)])
+    viewed = runner.invoke(app, ["view", "stamped", "--json", "--tasks-root", str(root)])
+
+    assert updated.exit_code == 0
+    assert "reviewed_at: 2026-03-01 14:30:00\n" in task_md.read_text(encoding="utf-8")
+    assert listed.exit_code == 0 and json.loads(listed.output)[0]["review"] == {"at": "2026-01-01"}
+    assert viewed.exit_code == 0
+
+
+def test_numeric_choice_values_filter_and_bool_values_warn(tmp_path: Path) -> None:
+    # Purpose: choice values YAML reads as numbers still match filters (`size: 2` matches
+    # size=2); values YAML reads as booleans (yes/no) produce a warning to quote them.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    cfg = _read_config(root / "config.yaml")
+    cfg["settings"]["fields"] = [{"name": "size", "type": "choice", "values": [1, 2, 3]}]
+    (root / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+    runner.invoke(app, ["create", "sized", "size=2", "--tasks-root", str(root)])
+    task_md = _task_md_path(root, "todo", "sized")
+    task_md.write_text(task_md.read_text(encoding="utf-8").replace("size: '2'", "size: 2"), encoding="utf-8")
+
+    filtered = runner.invoke(app, ["list", "size=2", "--json", "--tasks-root", str(root)])
+    assert filtered.exit_code == 0
+    assert [item["task_name"] for item in json.loads(filtered.output)] == ["sized"]
+    assert "Warning" not in filtered.output
+
+    (root / "config.yaml").write_text(
+        "settings:\n  fields:\n  - name: done\n    type: choice\n    values: [yes, no]\n",
+        encoding="utf-8",
+    )
+    warned = runner.invoke(app, ["list", "--tasks-root", str(root)])
+    assert "values YAML reads as true/false" in warned.output
+
+
+def test_trashed_tasks_do_not_trigger_field_warnings(tmp_path: Path) -> None:
+    # Purpose: invalid values are only reported for live tasks, not for tasks in trash/.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "gone", "--tasks-root", str(root)])
+    task_md = _task_md_path(root, "todo", "gone")
+    task_md.write_text(task_md.read_text(encoding="utf-8").replace("priority: p2", "priority: p9"), encoding="utf-8")
+    runner.invoke(app, ["delete", "gone", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["create", "fresh", "--tasks-root", str(root)])
+
+    assert result.exit_code == 0
+    assert "Warning" not in result.output

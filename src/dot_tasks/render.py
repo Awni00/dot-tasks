@@ -38,9 +38,10 @@ _RANKED_STYLES = ("bold red", "bold yellow", "cyan")
 
 def _choice_style(field_def: FieldDef, value: object) -> str:
     """Ranked choices are coloured by position; the last value is dimmed."""
-    if not field_def.ranked or value not in field_def.values:
+    text = None if value is None else str(value)
+    if not field_def.ranked or text not in field_def.values:
         return ""
-    index = field_def.values.index(value)
+    index = field_def.values.index(text)
     if index == len(field_def.values) - 1 and index > 0:
         return "dim"
     return _RANKED_STYLES[index] if index < len(_RANKED_STYLES) else ""
@@ -259,7 +260,7 @@ def render_task_list_json(tasks: Iterable[Task], unmet_counts: dict[str, int]) -
         item["dependency_health"] = _health_label(unmet_counts.get(task.metadata.task_id, 0))
         item["path"] = str(task.task_dir)
         payload.append(item)
-    return json.dumps(payload, indent=2)
+    return json.dumps(payload, indent=2, default=str)
 
 
 def _graph_scope_label(graph: DependencyGraph) -> str:
@@ -646,7 +647,7 @@ def render_tag_counts_rich(
 
 def render_tag_counts_json(rows: Iterable[dict[str, str | int]]) -> str:
     payload = [dict(row) for row in rows]
-    return json.dumps(payload, indent=2)
+    return json.dumps(payload, indent=2, default=str)
 
 
 def _inline_dependency_rows(rows: list[tuple[str, str, str]]) -> str:
@@ -868,4 +869,4 @@ def render_task_detail_json(task: Task, dependency_rows: list[tuple[str, str, st
         "body": task.body,
         "path": str(task.task_dir),
     }
-    return json.dumps(payload, indent=2)
+    return json.dumps(payload, indent=2, default=str)

@@ -352,8 +352,8 @@ def _read_settings(
             continue
         if key in RETIRED_SETTINGS:
             warn(
-                f"settings.{key} in {config_path(tasks_root)} is no longer supported: "
-                f"{RETIRED_SETTINGS[key]}. Ignoring."
+                f"settings.{key} in {config_path(tasks_root)} is no longer supported "
+                f"({RETIRED_SETTINGS[key]}). Run `dot-tasks init` to migrate. Ignoring."
             )
         else:
             warn(f"Unsupported settings key '{key}' in {config_path(tasks_root)}. Ignoring.")
@@ -439,6 +439,11 @@ def _parse_field_entry(
         if not isinstance(raw_values, list) or not raw_values:
             warn(f"Choice field '{name}' at {where} needs a non-empty 'values' list. Ignoring.")
             return None
+        if any(isinstance(value, bool) for value in raw_values):
+            warn(
+                f"Choice field '{name}' at {where} has values YAML reads as true/false "
+                "(e.g. yes/no); quote them."
+            )
         values = tuple(str(value) for value in raw_values)
         ranked = bool(raw.get("ranked", base.ranked if base and base.type == "choice" else False))
     elif "values" in raw:
@@ -480,6 +485,18 @@ def parse_field_entries(
         seen.add(field_def.name)
         parsed.append(field_def)
     return parsed
+
+
+def effective_field_entries(settings: dict[str, Any]) -> list[Any]:
+    """The settings.fields entries a config is using, also for 0.1 configs without the key.
+
+    A 0.1 config uses all built-ins, minus due_date when `due_dates.enabled` was false.
+    """
+    if isinstance(settings.get("fields"), list):
+        return list(settings["fields"])
+    due_dates = settings.get("due_dates")
+    disabled = isinstance(due_dates, dict) and due_dates.get("enabled") is False
+    return [name for name in DEFAULT_FIELD_NAMES if not (disabled and name == "due_date")]
 
 
 def resolve_fields(
@@ -635,7 +652,7 @@ def migrate_retired_settings(tasks_root: Path) -> list[str]:
     if (
         isinstance(due_dates, dict)
         and due_dates.get("enabled") is False
-        and isinstance(settings.get("fields"), list) is False
+        and not isinstance(settings.get("fields"), list)
     ):
         settings["fields"] = [name for name in DEFAULT_FIELD_NAMES if name != "due_date"]
         messages.append("Replaced settings.due_dates (disabled) with settings.fields without due_date")
@@ -689,11 +706,10 @@ _REQUIRED_KEYS = ("task_id", "task_name", "status", "date_created")
 
 
 def _yaml_dates_to_iso(value: Any) -> Any:
-    # YAML parses unquoted dates (e.g. `due_date: 2026-03-01`) as date objects;
-    # the rest of the code expects ISO strings.
-    if isinstance(value, dt.datetime):
-        return value.date().isoformat()
-    if isinstance(value, dt.date):
+    # YAML parses unquoted dates (e.g. `due_date: 2026-03-01`) as date objects; the rest of
+    # the code expects ISO strings. Timestamps (date + time) are kept as they are, so a
+    # hand-written `reviewed_at: 2026-03-01 14:30:00` is written back unchanged.
+    if isinstance(value, dt.date) and not isinstance(value, dt.datetime):
         return value.isoformat()
     return value
 
