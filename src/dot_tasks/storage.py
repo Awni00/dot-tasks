@@ -329,25 +329,38 @@ def read_config(tasks_root: Path, warn: Callable[[str], None] | None = None) -> 
     return payload
 
 
-def resolve_interactive_enabled(
+def _read_settings(
     tasks_root: Path,
     warn: Callable[[str], None] | None = None,
-) -> bool:
+) -> dict[str, Any] | None:
+    """Read `settings` from config.yaml, warning about unsupported or invalid keys.
+
+    Returns None when the settings section is invalid (callers fall back to defaults).
+    """
     data = read_config(tasks_root, warn=warn)
-    supported_top_keys = {"settings"}
     for key in data.keys():
-        if key not in supported_top_keys and warn is not None:
+        if key != "settings" and warn is not None:
             warn(f"Unsupported config key '{key}' in {config_path(tasks_root)}. Ignoring.")
 
     settings = data.get("settings", {})
     if not isinstance(settings, dict):
         if warn is not None:
             warn(f"Invalid settings section in {config_path(tasks_root)}. Using defaults.")
-        return DEFAULT_INTERACTIVE_ENABLED
+        return None
 
     for key in settings.keys():
         if key not in SUPPORTED_SETTINGS_KEYS and warn is not None:
             warn(f"Unsupported settings key '{key}' in {config_path(tasks_root)}. Ignoring.")
+    return settings
+
+
+def resolve_interactive_enabled(
+    tasks_root: Path,
+    warn: Callable[[str], None] | None = None,
+) -> bool:
+    settings = _read_settings(tasks_root, warn)
+    if settings is None:
+        return DEFAULT_INTERACTIVE_ENABLED
 
     interactive_enabled = settings.get("interactive_enabled")
     if interactive_enabled is None:
@@ -366,21 +379,9 @@ def resolve_show_banner(
     tasks_root: Path,
     warn: Callable[[str], None] | None = None,
 ) -> bool:
-    data = read_config(tasks_root, warn=warn)
-    supported_top_keys = {"settings"}
-    for key in data.keys():
-        if key not in supported_top_keys and warn is not None:
-            warn(f"Unsupported config key '{key}' in {config_path(tasks_root)}. Ignoring.")
-
-    settings = data.get("settings", {})
-    if not isinstance(settings, dict):
-        if warn is not None:
-            warn(f"Invalid settings section in {config_path(tasks_root)}. Using defaults.")
+    settings = _read_settings(tasks_root, warn)
+    if settings is None:
         return DEFAULT_SHOW_BANNER
-
-    for key in settings.keys():
-        if key not in SUPPORTED_SETTINGS_KEYS and warn is not None:
-            warn(f"Unsupported settings key '{key}' in {config_path(tasks_root)}. Ignoring.")
 
     show_banner = settings.get("show_banner")
     if show_banner is None:
@@ -399,21 +400,9 @@ def resolve_due_date_settings(
     tasks_root: Path,
     warn: Callable[[str], None] | None = None,
 ) -> DueDateSettings:
-    data = read_config(tasks_root, warn=warn)
-    supported_top_keys = {"settings"}
-    for key in data.keys():
-        if key not in supported_top_keys and warn is not None:
-            warn(f"Unsupported config key '{key}' in {config_path(tasks_root)}. Ignoring.")
-
-    settings = data.get("settings", {})
-    if not isinstance(settings, dict):
-        if warn is not None:
-            warn(f"Invalid settings section in {config_path(tasks_root)}. Using defaults.")
+    settings = _read_settings(tasks_root, warn)
+    if settings is None:
         return DueDateSettings()
-
-    for key in settings.keys():
-        if key not in SUPPORTED_SETTINGS_KEYS and warn is not None:
-            warn(f"Unsupported settings key '{key}' in {config_path(tasks_root)}. Ignoring.")
 
     due_dates = settings.get("due_dates")
     if due_dates is None:
@@ -452,21 +441,9 @@ def resolve_list_table_columns(
     warn: Callable[[str], None] | None = None,
 ) -> list[dict[str, int | str]]:
     defaults = _default_list_table_columns()
-    data = read_config(tasks_root, warn=warn)
-    supported_top_keys = {"settings"}
-    for key in data.keys():
-        if key not in supported_top_keys and warn is not None:
-            warn(f"Unsupported config key '{key}' in {config_path(tasks_root)}. Ignoring.")
-
-    settings = data.get("settings", {})
-    if not isinstance(settings, dict):
-        if warn is not None:
-            warn(f"Invalid settings section in {config_path(tasks_root)}. Using defaults.")
+    settings = _read_settings(tasks_root, warn)
+    if settings is None:
         return defaults
-
-    for key in settings.keys():
-        if key not in SUPPORTED_SETTINGS_KEYS and warn is not None:
-            warn(f"Unsupported settings key '{key}' in {config_path(tasks_root)}. Ignoring.")
 
     list_table = settings.get("list_table")
     if list_table is None:
@@ -551,21 +528,9 @@ def resolve_task_body_sections(
     warn: Callable[[str], None] | None = None,
 ) -> list[dict[str, str]]:
     defaults = list(DEFAULT_TASK_BODY_SECTIONS)
-    data = read_config(tasks_root, warn=warn)
-    supported_top_keys = {"settings"}
-    for key in data.keys():
-        if key not in supported_top_keys and warn is not None:
-            warn(f"Unsupported config key '{key}' in {config_path(tasks_root)}. Ignoring.")
-
-    settings = data.get("settings", {})
-    if not isinstance(settings, dict):
-        if warn is not None:
-            warn(f"Invalid settings section in {config_path(tasks_root)}. Using defaults.")
+    settings = _read_settings(tasks_root, warn)
+    if settings is None:
         return defaults
-
-    for key in settings.keys():
-        if key not in SUPPORTED_SETTINGS_KEYS and warn is not None:
-            warn(f"Unsupported settings key '{key}' in {config_path(tasks_root)}. Ignoring.")
 
     sections = settings.get("task_body_sections")
     if sections is None:

@@ -22,6 +22,7 @@ def test_resolve_list_table_columns_uses_defaults_when_missing(tmp_path: Path) -
 
 
 def test_resolve_due_date_settings_defaults_when_missing(tmp_path: Path) -> None:
+    # Purpose: without config, due dates are enabled by default.
     settings = storage.resolve_due_date_settings(tmp_path / ".tasks")
 
     assert settings.enabled is True
@@ -39,6 +40,7 @@ def test_resolve_due_date_settings_reports_whether_section_is_configured(tmp_pat
 
 
 def test_resolve_due_date_settings_reads_valid_config(tmp_path: Path) -> None:
+    # Purpose: an explicit valid due_dates.enabled value is read.
     root = tmp_path / ".tasks"
     _write_config(
         root,
@@ -55,6 +57,7 @@ def test_resolve_due_date_settings_reads_valid_config(tmp_path: Path) -> None:
 
 
 def test_resolve_due_date_settings_warns_and_defaults_invalid_values(tmp_path: Path) -> None:
+    # Purpose: invalid due_dates values and unknown keys warn and fall back to defaults.
     root = tmp_path / ".tasks"
     _write_config(
         root,
@@ -111,6 +114,7 @@ def test_default_done_list_table_columns() -> None:
 
 
 def test_done_list_defaults_work_when_due_dates_are_disabled() -> None:
+    # Purpose: the done-list column defaults still swap deps for completed when due dates are disabled.
     columns = storage.apply_due_date_list_setting(
         storage.default_list_table_columns(),
         enabled=False,
@@ -311,6 +315,7 @@ def test_resolve_show_banner_reads_valid_bool(tmp_path: Path) -> None:
 
 
 def test_parse_task_backfills_missing_optional_metadata(tmp_path: Path) -> None:
+    # Purpose: task.md files written before newer fields (e.g. due_date) existed still load, with defaults filled in.
     task_dir = tmp_path / "todo" / "2026-02-24-legacy-task"
     task_dir.mkdir(parents=True, exist_ok=True)
     (task_dir / "task.md").write_text(

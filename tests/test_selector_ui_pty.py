@@ -109,6 +109,7 @@ def test_multiline_text_submit_does_not_emit_terminal_height_whitespace(
 
 @pytest.mark.skipif(os.name != "posix", reason="requires a POSIX pseudo-terminal")
 def test_segmented_date_picker_handles_arrow_navigation() -> None:
+    # Purpose: in a real terminal, arrow keys move between and adjust date segments and Enter returns the date.
     import fcntl
     import pty
     import termios

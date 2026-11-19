@@ -266,6 +266,7 @@ class DotTasksTyperGroup(typer.core.TyperGroup):
             ACTIVE_CLI_ARGS = tuple(sys.argv[1:])
         else:
             ACTIVE_CLI_ARGS = tuple(str(token) for token in cli_args)
+        _EMITTED_CONFIG_WARNINGS.clear()
         try:
             return super().main(*args, **kwargs)
         finally:
@@ -295,7 +296,15 @@ def _echo_root_notice(root: Path, multiple_found: bool) -> None:
         typer.echo("Warning: multiple .tasks roots found; using nearest ancestor.", err=True)
 
 
+_EMITTED_CONFIG_WARNINGS: set[str] = set()
+
+
 def _warn_config(message: str) -> None:
+    # Several settings resolvers read the same config in one command; print each
+    # distinct warning once.
+    if message in _EMITTED_CONFIG_WARNINGS:
+        return
+    _EMITTED_CONFIG_WARNINGS.add(message)
     typer.echo(f"Warning: {message}", err=True)
 
 
@@ -1007,42 +1016,26 @@ def view_cmd(
             blocked_by = svc.blocked_by_rows(task)
             unmet_count, _ = svc.dependency_health(task)
             if _can_render_rich_detail_output():
-                if due_date_settings.enabled:
-                    _print_rich(
-                        render.render_task_detail_rich(
-                            task,
-                            deps,
-                            blocked_by,
-                            unmet_count,
-                            show_due_date=True,
-                        )
+                _print_rich(
+                    render.render_task_detail_rich(
+                        task,
+                        deps,
+                        blocked_by,
+                        unmet_count,
+                        show_due_date=due_date_settings.enabled,
                     )
-                else:
-                    _print_rich(
-                        render.render_task_detail_rich(task, deps, blocked_by, unmet_count)
-                    )
+                )
             else:
-                if due_date_settings.enabled:
-                    typer.echo(
-                        render.render_task_detail_plain(
-                            task,
-                            deps,
-                            blocked_by,
-                            unmet_count,
-                            enable_links=_can_interact(),
-                            show_due_date=True,
-                        )
+                typer.echo(
+                    render.render_task_detail_plain(
+                        task,
+                        deps,
+                        blocked_by,
+                        unmet_count,
+                        enable_links=_can_interact(),
+                        show_due_date=due_date_settings.enabled,
                     )
-                else:
-                    typer.echo(
-                        render.render_task_detail_plain(
-                            task,
-                            deps,
-                            blocked_by,
-                            unmet_count,
-                            enable_links=_can_interact(),
-                        )
-                    )
+                )
 
     _run_and_handle(_inner)
 

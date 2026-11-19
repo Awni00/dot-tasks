@@ -117,30 +117,34 @@ def _column_style(name: str) -> str:
     return ""
 
 
-def is_overdue(task: Task, *, today: dt.date | None = None) -> bool:
+def _open_due_date(task: Task) -> dt.date | None:
+    """Return the due date of a todo/doing task, or None (no date, done, or unparseable)."""
     if task.metadata.status not in {"todo", "doing"} or not task.metadata.due_date:
-        return False
+        return None
     try:
-        due_date = dt.date.fromisoformat(task.metadata.due_date)
+        return dt.date.fromisoformat(task.metadata.due_date)
     except ValueError:
-        return False
-    return due_date < (today or dt.date.today())
+        return None
+
+
+def is_overdue(task: Task, *, today: dt.date | None = None) -> bool:
+    due_date = _open_due_date(task)
+    return due_date is not None and due_date < (today or dt.date.today())
 
 
 def is_due_today(task: Task, *, today: dt.date | None = None) -> bool:
-    if task.metadata.status not in {"todo", "doing"} or not task.metadata.due_date:
-        return False
-    try:
-        due_date = dt.date.fromisoformat(task.metadata.due_date)
-    except ValueError:
-        return False
-    return due_date == (today or dt.date.today())
+    due_date = _open_due_date(task)
+    return due_date is not None and due_date == (today or dt.date.today())
 
 
 def _due_date_highlight_style(task: Task, *, today: dt.date | None = None) -> str:
-    if is_overdue(task, today=today):
+    due_date = _open_due_date(task)
+    if due_date is None:
+        return ""
+    today = today or dt.date.today()
+    if due_date < today:
         return "bold red"
-    if is_due_today(task, today=today):
+    if due_date == today:
         return "bold orange3"
     return ""
 

@@ -670,6 +670,7 @@ def test_create_accepts_spec_readiness(tmp_path: Path) -> None:
 
 
 def test_create_accepts_due_date_even_when_feature_disabled(tmp_path: Path) -> None:
+    # Purpose: explicit --due-date stays usable by scripts even when due-date display is disabled in config.
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
     cfg = _read_config(root / "config.yaml")
@@ -700,6 +701,7 @@ def test_create_accepts_due_date_even_when_feature_disabled(tmp_path: Path) -> N
 
 @pytest.mark.parametrize("due_date", ["2026-02-30", "20260228", "tomorrow"])
 def test_create_rejects_invalid_due_date(tmp_path: Path, due_date: str) -> None:
+    # Purpose: create rejects malformed or impossible dates instead of storing them.
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
 
@@ -713,6 +715,7 @@ def test_create_rejects_invalid_due_date(tmp_path: Path, due_date: str) -> None:
 
 
 def test_update_sets_and_clears_due_date(tmp_path: Path) -> None:
+    # Purpose: update can set a due date and later remove it with --clear-due-date.
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
     runner.invoke(app, ["create", "dated-task", "--tasks-root", str(root)])
@@ -742,6 +745,7 @@ def test_update_sets_and_clears_due_date(tmp_path: Path) -> None:
 
 
 def test_update_rejects_setting_and_clearing_due_date_together(tmp_path: Path) -> None:
+    # Purpose: conflicting --due-date/--clear-due-date fail before any change (the task stays in todo).
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
     runner.invoke(app, ["create", "dated-task", "--tasks-root", str(root)])
@@ -765,6 +769,22 @@ def test_update_rejects_setting_and_clearing_due_date_together(tmp_path: Path) -
     assert "Cannot use due_date and clear_due_date together" in result.output
     assert _task_md_path(root, "todo", "dated-task").exists()
     assert not _task_dir(root, "doing", "dated-task").exists()
+
+
+def test_config_warning_printed_once_per_command(tmp_path: Path) -> None:
+    # Purpose: commands resolve several settings from the same config; an unsupported key must
+    # be reported once per command, and again by the next command (dedupe resets per run).
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    with (root / "config.yaml").open("a", encoding="utf-8") as fh:
+        fh.write("  unknown_setting: 1\n")
+
+    first = runner.invoke(app, ["list", "--tasks-root", str(root)])
+    second = runner.invoke(app, ["list", "--tasks-root", str(root)])
+
+    for result in (first, second):
+        assert result.exit_code == 0, result.output
+        assert result.output.count("Unsupported settings key 'unknown_setting'") == 1
 
 
 def test_hand_written_unquoted_dates_are_read_as_iso_strings(tmp_path: Path) -> None:
@@ -1793,6 +1813,7 @@ def test_list_non_tty_passes_configured_columns(
 
 
 def test_list_suppresses_due_date_column_when_feature_disabled(tmp_path: Path) -> None:
+    # Purpose: with due dates disabled, list hides the due_date column even if it is configured.
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
     runner.invoke(
@@ -1826,6 +1847,7 @@ def test_list_suppresses_due_date_column_when_feature_disabled(tmp_path: Path) -
 
 
 def test_list_and_view_show_due_date_when_enabled(tmp_path: Path) -> None:
+    # Purpose: with due dates enabled, list shows the due_date column and view shows the date.
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
     runner.invoke(

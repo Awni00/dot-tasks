@@ -388,6 +388,7 @@ def test_init_config_form_uses_passed_defaults(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_init_config_form_configures_due_dates(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Purpose: init asks whether to enable due dates and offers and preselects the due_date column.
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: "enabled")
     captured_options: list[tuple[str, str]] = []
     captured_defaults: list[str] = []
@@ -423,6 +424,7 @@ def test_init_config_form_configures_due_dates(monkeypatch: pytest.MonkeyPatch) 
 def test_init_config_form_hides_due_date_column_when_feature_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Purpose: when due dates are disabled in init, the due_date column is not offered.
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: "enabled")
     captured_options: list[tuple[str, str]] = []
 
@@ -444,6 +446,7 @@ def test_init_config_form_hides_due_date_column_when_feature_disabled(
 def test_init_config_form_preselects_due_date_when_reenabling_feature(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Purpose: re-enabling due dates in init preselects the due_date column.
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: "enabled")
     captured_defaults: list[str] = []
 
@@ -665,6 +668,7 @@ def test_create_form_reprompts_for_invalid_task_name(
 def test_create_form_prompts_for_due_date_only_when_enabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Purpose: the interactive create form asks for a due date when the feature is enabled.
     choices = iter(["p2", "m", "unspecified"])
     prompts = iter(["dated-task", ""])
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
@@ -686,6 +690,7 @@ def test_create_form_prompts_for_due_date_only_when_enabled(
 def test_create_form_skips_due_date_prompt_when_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Purpose: the interactive create form never asks for a due date when the feature is disabled.
     choices = iter(["p2", "m", "unspecified"])
     prompts = iter(["undated-task", ""])
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
@@ -1347,6 +1352,7 @@ def test_update_form_depends_on_uses_defaults(monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_update_form_can_set_due_date(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Purpose: the interactive update form can set a due date.
     choices = iter(["__keep__", "__keep__", "__keep__", "set", "__keep__"])
     task = _task("alpha")
     monkeypatch.setattr(prompt_ui, "_prompt_single_choice", lambda *args, **kwargs: next(choices))
@@ -1367,6 +1373,7 @@ def test_update_form_can_set_due_date(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_update_form_can_clear_due_date(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Purpose: the interactive update form can clear an existing due date.
     choices = iter(["__keep__", "__keep__", "__keep__", "clear", "__keep__"])
     task = _task("alpha")
     task.metadata.due_date = "2026-08-15"

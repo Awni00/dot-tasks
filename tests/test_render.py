@@ -132,6 +132,7 @@ def test_render_task_list_plain_supports_completed_column() -> None:
 
 
 def test_render_task_list_plain_supports_due_date_column() -> None:
+    # Purpose: plain list output renders the due_date column and its value.
     task = _task(
         "dated-task",
         "todo",
@@ -154,6 +155,8 @@ def test_render_task_list_plain_supports_due_date_column() -> None:
 def test_render_task_list_rich_highlights_only_open_overdue_dates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Purpose: rich list output highlights overdue (red) and due-today (orange) dates, only for
+    # open (todo/doing) tasks.
     pytest.importorskip("rich")
     from rich.console import Console
 
@@ -574,6 +577,7 @@ def test_render_task_detail_plain_uses_dash_for_empty_fields(tmp_path: Path) -> 
 
 
 def test_render_task_detail_plain_optionally_shows_due_date(tmp_path: Path) -> None:
+    # Purpose: plain detail output shows the due date only when asked to.
     task = _task(
         "dated-task",
         "todo",

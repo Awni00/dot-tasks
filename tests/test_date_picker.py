@@ -11,20 +11,24 @@ from dot_tasks.selector_ui import (
 
 
 def test_adjust_day_crosses_month_and_year_boundaries() -> None:
+    # Purpose: stepping the day segment rolls over month and year ends in both directions.
     assert adjust_date_segment(dt.date(2026, 12, 31), 2, 1) == dt.date(2027, 1, 1)
     assert adjust_date_segment(dt.date(2026, 1, 1), 2, -1) == dt.date(2025, 12, 31)
 
 
 def test_adjust_month_clamps_day_and_crosses_year() -> None:
+    # Purpose: stepping the month clamps the day to the target month's length and rolls over the year.
     assert adjust_date_segment(dt.date(2024, 1, 31), 1, 1) == dt.date(2024, 2, 29)
     assert adjust_date_segment(dt.date(2026, 12, 31), 1, 1) == dt.date(2027, 1, 31)
 
 
 def test_adjust_year_clamps_leap_day() -> None:
+    # Purpose: stepping the year from Feb 29 clamps to Feb 28 in a non-leap year.
     assert adjust_date_segment(dt.date(2024, 2, 29), 0, 1) == dt.date(2025, 2, 28)
 
 
 def test_replace_date_segment_validates_selected_field() -> None:
+    # Purpose: typing a segment value clamps the day where needed and rejects out-of-range values.
     assert replace_date_segment(dt.date(2026, 7, 29), 1, 2) == dt.date(2026, 2, 28)
 
     try:
@@ -36,6 +40,7 @@ def test_replace_date_segment_validates_selected_field() -> None:
 
 
 def test_commit_date_buffer_keeps_invalid_input_editable() -> None:
+    # Purpose: invalid typed input keeps the old value and buffer and shows an error, so the user can fix it.
     state = DatePickerState(
         value=dt.date(2026, 7, 29),
         segment=1,
@@ -49,6 +54,7 @@ def test_commit_date_buffer_keeps_invalid_input_editable() -> None:
 
 
 def test_commit_date_buffer_applies_valid_replacement() -> None:
+    # Purpose: valid typed input replaces the segment and clears the buffer and error.
     state = DatePickerState(
         value=dt.date(2026, 7, 29),
         segment=2,
