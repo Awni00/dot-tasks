@@ -82,9 +82,10 @@ Expected snippet:
 
 ```text
 build-nightly-report (t-20260206-001)
-[todo] [p0] [l] [deps: blocked(1)]
+[todo] [deps: blocked(1)]
 summary: Build nightly report generation using exported task snapshots.
-owner: alex    tags: reporting, automation
+priority: p0    effort: l    owner: alex
+tags: reporting, automation
 created: 2026-02-06    started: -    completed: -
 depends_on: add-json-export (t-20260205-001) [todo]
 blocks: -

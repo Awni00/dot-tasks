@@ -198,13 +198,12 @@ def list_column_names(columns: list[dict[str, int | str]]) -> list[str]:
     return [str(column["name"]) for column in columns]
 
 
-def apply_done_list_defaults(
+def apply_done_list_columns(
     columns: list[dict[str, int | str]],
-    field_defs: list[FieldDef],
 ) -> list[dict[str, int | str]]:
-    """For the default column set, show `completed` instead of `deps` for done tasks."""
+    """For done tasks, show `completed` in place of `deps` (dependency health is moot)."""
     names = list_column_names(columns)
-    if "completed" in names or names != default_list_column_names(field_defs):
+    if "completed" in names:
         return columns
     width = FIXED_LIST_COLUMN_WIDTHS["completed"]
     return [

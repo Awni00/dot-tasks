@@ -478,9 +478,9 @@ def test_render_dependency_graph_layers_rich_contains_updated_l0_heading() -> No
 
 
 def test_render_task_detail_plain_header_first_layout(tmp_path: Path) -> None:
-    # Purpose: plain detail output keeps its header-first line order (choice fields as chips,
-    # summary, text fields with tags, date fields with the lifecycle dates), and lists task.md
-    # first, then every other file in the folder in name order.
+    # Purpose: plain detail output keeps its header-first line order: status chips, summary,
+    # one labeled line with every configured field in config order, tags, lifecycle dates; then
+    # task.md first and every other file in the folder in name order.
     task_dir = tmp_path / "build-nightly-report"
     task_dir.mkdir()
     (task_dir / "task.md").write_text("task", encoding="utf-8")
@@ -508,14 +508,15 @@ def test_render_task_detail_plain_header_first_layout(tmp_path: Path) -> None:
     lines = output.splitlines()
 
     assert lines[0] == "build-nightly-report (t-20260206-001)"
-    assert lines[1] == "[todo] [p0] [l] [deps: blocked(1)]"
+    assert lines[1] == "[todo] [deps: blocked(1)]"
     assert lines[2] == "summary: Nightly report from exported snapshots."
-    assert lines[3] == "owner: alex    tags: reporting, automation"
-    assert lines[4] == "created: 2026-02-06    started: -    completed: -    due_date: -"
-    assert lines[5] == "depends_on: add-json-export (t-20260205-001) [todo]"
-    assert lines[6] == "blocks: downstream-task (t-20260207-001) [doing]"
-    assert lines[7] == f"dir: {task_dir.name}"
-    assert lines[8] == "files: task.md | activity.md | notes.txt | plan.md"
+    assert lines[3] == "priority: p0    effort: l    due_date: -    owner: alex"
+    assert lines[4] == "tags: reporting, automation"
+    assert lines[5] == "created: 2026-02-06    started: -    completed: -"
+    assert lines[6] == "depends_on: add-json-export (t-20260205-001) [todo]"
+    assert lines[7] == "blocks: downstream-task (t-20260207-001) [doing]"
+    assert lines[8] == f"dir: {task_dir.name}"
+    assert lines[9] == "files: task.md | activity.md | notes.txt | plan.md"
     assert "## Summary" in output
 
 
@@ -541,10 +542,11 @@ def test_render_task_detail_plain_uses_dash_for_empty_fields(tmp_path: Path) -> 
 
     raw_output = render.render_task_detail_plain(task, [], [], 0, FIELDS)
     output = _strip_osc8(raw_output)
-    assert "[todo] [p2] [m] [deps: ready]" in output
-    assert "summary: -" in output
-    assert "owner: -    tags: -" in output
-    assert "started: -    completed: -    due_date: -" in output
+    assert "[todo] [deps: ready]" in output
+    assert "summary:" not in output  # an empty summary line is omitted
+    assert "priority: p2    effort: m    due_date: -    owner: -" in output
+    assert "tags: -" in output
+    assert "started: -    completed: -\n" in output
     assert "depends_on: -" in output
     assert "blocks: -" in output
     assert f"dir: {task_dir.name}" in output
@@ -642,10 +644,10 @@ def test_render_task_detail_rich_header_first_layout(tmp_path: Path) -> None:
     text = console.export_text()
 
     assert "build-nightly-report (t-20260206-001)" in text
-    assert "[todo] [p0] [l] [deps: blocked(1)]" in text
+    assert "[todo] [deps: blocked(1)]" in text
     assert "summary: Nightly report from exported snapshots." in text
-    assert "owner: alex    tags: reporting, automation" in text
-    assert "due_date: -" in text
+    assert "priority: p0    effort: l    due_date: -    owner: alex" in text
+    assert "tags: reporting, automation" in text
     assert "depends_on: add-json-export (t-20260205-001) [todo]" in text
     assert "blocks: downstream-task (t-20260207-001) [doing]" in text
     assert f"dir: {task_dir.name}" in text

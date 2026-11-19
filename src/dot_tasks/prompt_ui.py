@@ -9,7 +9,7 @@ from typing import Any, Callable
 
 import typer
 
-from .models import FieldDef, Task, VALID_STATUSES
+from .models import FieldDef, Task, VALID_STATUSES, status_label
 from .selector_ui import (
     SelectionSeparator,
     SelectorUnavailableError,
@@ -726,7 +726,7 @@ def update_form(
 
     status = _prompt_single_choice(
         "status",
-        [(_KEEP, "Keep current"), *[(value, value) for value in VALID_STATUSES]],
+        [(_KEEP, "Keep current"), *[(value, status_label(value)) for value in VALID_STATUSES]],
         default_value=_KEEP,
     )
     if status is None:

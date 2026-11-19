@@ -1048,7 +1048,8 @@ def test_view_renders_dependencies_as_name_and_id(tmp_path: Path) -> None:
     output = _strip_osc8(result.output)
     task_dir = _task_dir(root, "todo", "task-view").resolve()
     assert f"task-view ({task_id})" in output
-    assert "[todo] [p2] [m] [deps: blocked(1)]" in output
+    assert "[todo] [deps: blocked(1)]" in output
+    assert "priority: p2    effort: m    due_date: -" in output
     assert f"depends_on: dep-view ({dep_id}) [todo]" in output
     assert "blocks: -" in output
     assert f"dir: {task_dir.name}" in output
@@ -1250,6 +1251,7 @@ def test_graph_non_tty_uses_plain_renderer(monkeypatch: pytest.MonkeyPatch, tmp_
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
     runner.invoke(app, ["create", "plain-graph", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "plain-graph-child", "--depends-on", "plain-graph", "--tasks-root", str(root)])
 
     monkeypatch.setattr("dot_tasks.cli._can_render_rich_graph_output", lambda: False)
     monkeypatch.setattr(
@@ -1271,6 +1273,7 @@ def test_graph_tty_uses_rich_renderer(monkeypatch: pytest.MonkeyPatch, tmp_path:
     root = tmp_path / ".tasks"
     runner.invoke(app, ["init", "--tasks-root", str(root)])
     runner.invoke(app, ["create", "rich-graph", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "rich-graph-child", "--depends-on", "rich-graph", "--tasks-root", str(root)])
 
     monkeypatch.setattr("dot_tasks.cli._can_render_rich_graph_output", lambda: True)
     monkeypatch.setattr(
@@ -1876,7 +1879,7 @@ def test_custom_field_can_be_set_listed_filtered_and_viewed(tmp_path: Path) -> N
     assert names("kind=theory", "kind=writing") == ["draft", "lemma"]
     assert names("kind=theory", "priority=p2") == []
     assert names("kind=") == ["loose"]
-    assert "[p0] [theory]" in _strip_osc8(viewed.output)
+    assert "priority: p0    kind: theory" in _strip_osc8(viewed.output)
 
 
 def test_list_tty_passes_configured_columns(
@@ -2650,3 +2653,94 @@ def test_trashed_tasks_do_not_trigger_field_warnings(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert "Warning" not in result.output
+
+
+def test_root_notice_only_when_root_is_not_in_current_folder(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Purpose: "Using tasks root" is printed only when it is not obvious, i.e. when the .tasks
+    # folder was found in a parent folder; from the project root commands stay quiet.
+    project = tmp_path / "proj"
+    (project / "sub").mkdir(parents=True)
+    runner.invoke(app, ["init", "--nointeractive", "--tasks-root", str(project / ".tasks")])
+
+    monkeypatch.chdir(project)
+    at_root = runner.invoke(app, ["list"])
+    monkeypatch.chdir(project / "sub")
+    in_sub = runner.invoke(app, ["list"])
+
+    assert "Using tasks root" not in at_root.output
+    assert "Using tasks root" in in_sub.output
+
+
+def test_status_done_is_accepted_and_displayed(tmp_path: Path) -> None:
+    # Purpose: "done" (folder name, list filter) is accepted by update --status and shown in
+    # view without a deps chip; the stored value stays "completed".
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "finish-me", "--tasks-root", str(root)])
+
+    updated = runner.invoke(app, ["update", "finish-me", "--status", "done", "--tasks-root", str(root)])
+    viewed = runner.invoke(app, ["view", "finish-me", "--tasks-root", str(root)])
+    bad = runner.invoke(app, ["update", "finish-me", "--status", "finished", "--tasks-root", str(root)])
+
+    assert updated.exit_code == 0
+    meta, _ = _read_task_md(_task_md_path(root, "done", "finish-me"))
+    assert meta["status"] == "completed"
+    assert "\n[done]\n" in _strip_osc8(viewed.output)
+    assert "deps:" not in viewed.output
+    assert "use todo, doing or done" in bad.output
+
+
+def test_done_tasks_show_completed_instead_of_deps_with_custom_columns(tmp_path: Path) -> None:
+    # Purpose: for done tasks the deps column is replaced by the completion date even when the
+    # project uses its own column set.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    cfg = _read_config(root / "config.yaml")
+    cfg["settings"]["list_table"]["columns"] = [{"name": "task_name", "width": 20}, {"name": "deps", "width": 12}]
+    (root / "config.yaml").write_text(yaml.safe_dump(cfg, sort_keys=False), encoding="utf-8")
+    runner.invoke(app, ["create", "shipped", "--tasks-root", str(root)])
+    runner.invoke(app, ["complete", "shipped", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["list", "done", "--tasks-root", str(root)])
+
+    assert result.output.splitlines()[0].split() == ["task_name", "completed"]
+    assert dt.date.today().isoformat() in result.output
+
+
+def test_task_not_found_suggests_close_names(tmp_path: Path) -> None:
+    # Purpose: a mistyped or partial task name gets up to three suggestions.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "list-sortby-config", "--tasks-root", str(root)])
+
+    partial = runner.invoke(app, ["view", "sortby-config", "--tasks-root", str(root)])
+    unrelated = runner.invoke(app, ["view", "zzz", "--tasks-root", str(root)])
+
+    assert "Task not found: sortby-config\nDid you mean: list-sortby-config?" in partial.output
+    assert "Did you mean" not in unrelated.output
+
+
+def test_help_groups_commands_like_the_picker() -> None:
+    # Purpose: --help lists commands in the picker's sections and order.
+    output = runner.invoke(app, ["--help"]).output
+    positions = [output.index(name) for name in ("Inspect", "Lifecycle", "Maintenance", "Setup")]
+    assert positions == sorted(positions)
+    assert output.index(" list ") < output.index(" create ") < output.index(" rename ") < output.index(" init ")
+
+
+def test_graph_without_dependencies_says_so(tmp_path: Path) -> None:
+    # Purpose: with no dependencies the graph prints one line instead of a list of lone roots.
+    root = tmp_path / ".tasks"
+    runner.invoke(app, ["init", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "a", "--tasks-root", str(root)])
+    runner.invoke(app, ["create", "b", "--tasks-root", str(root)])
+
+    result = runner.invoke(app, ["graph", "--tasks-root", str(root)])
+
+    assert result.exit_code == 0
+    assert result.output.strip() == (
+        "None of the 2 active tasks have dependencies. "
+        "Add one with: dot-tasks update <task> --depends-on <task>"
+    )

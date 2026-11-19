@@ -328,7 +328,10 @@ def _resolve_existing_root(tasks_root: Path | None) -> Path:
         raise TaskValidationError(
             "No .tasks root found from current directory upward. Run 'dot-tasks init' first."
         )
-    _echo_root_notice(root, multiple)
+    # Only say which root is used when it is not obvious: found in a parent folder, or
+    # several roots exist.
+    if multiple or root.parent != Path.cwd().resolve():
+        _echo_root_notice(root, multiple)
     return root
 
 
@@ -604,7 +607,7 @@ def init_cmd(
     append_agents_snippet: AppendAgentsSnippetOption = False,
     agents_file: AgentsFileOption = None,
 ) -> None:
-    """Initialize .tasks directory layout."""
+    """Initialize .tasks/ and its settings."""
 
     def _inner() -> None:
         svc = _service(tasks_root, init=True)
@@ -747,7 +750,7 @@ def add_agents_snippet_cmd(
     agents_file: AgentsFileOption = None,
     yes: YesOption = False,
 ) -> None:
-    """Add or update the canonical dot-tasks section in AGENTS.md."""
+    """Add or update the dot-tasks section in AGENTS.md."""
 
     def _inner() -> None:
         resolved_tasks_root = _resolve_existing_root(tasks_root)
@@ -848,7 +851,7 @@ def start_cmd(
     nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
 ) -> None:
-    """Move task to doing."""
+    """Move a task to doing."""
 
     def _inner() -> None:
         svc = _service(tasks_root)
@@ -874,7 +877,7 @@ def complete_cmd(
     nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
 ) -> None:
-    """Mark task completed and move to done."""
+    """Move a task to done."""
 
     def _inner() -> None:
         svc = _service(tasks_root)
@@ -914,7 +917,7 @@ def list_cmd(
     nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
 ) -> None:
-    """List tasks grouped by status and sorted by created date (newest first)."""
+    """List tasks grouped by status, newest first."""
 
     def _inner() -> None:
         svc = _service(tasks_root)
@@ -940,7 +943,7 @@ def list_cmd(
             field_defs=field_defs,
         )
         if tasks and all(task.metadata.status == "completed" for task in tasks):
-            list_columns = storage.apply_done_list_defaults(list_columns, field_defs)
+            list_columns = storage.apply_done_list_columns(list_columns)
 
         if _can_render_rich_list_output():
             _print_rich(render.render_task_list_rich(tasks, unmet_counts, list_columns, field_defs))
@@ -1084,7 +1087,7 @@ def graph_cmd(
     nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
 ) -> None:
-    """Show dependency graph for active tasks."""
+    """Show the dependency graph of active tasks."""
 
     def _inner() -> None:
         _ = nointeractive
@@ -1093,6 +1096,17 @@ def graph_cmd(
 
         if not graph.nodes:
             typer.echo("No tasks found.")
+            return
+        if not any(node.depends_on for node in graph.nodes.values()):
+            count = len(graph.nodes)
+            noun = ("task" if count == 1 else "tasks") if include_done else (
+                "active task" if count == 1 else "active tasks"
+            )
+            subject = f"The only {noun} has" if count == 1 else f"None of the {count} {noun} have"
+            typer.echo(
+                f"{subject} dependencies. "
+                "Add one with: dot-tasks update <task> --depends-on <task>"
+            )
             return
 
         if mode == "tree":
@@ -1119,7 +1133,7 @@ def update_cmd(
             show_default=False,
         ),
     ] = None,
-    status: Annotated[str | None, typer.Option("--status")] = None,
+    status: Annotated[str | None, typer.Option("--status", help="todo, doing or done")] = None,
     tag: Annotated[list[str], typer.Option("--tag")] = [],
     replace_tags: Annotated[bool, typer.Option("--replace-tags")] = False,
     depends_on: Annotated[list[str], typer.Option("--depends-on")] = [],
@@ -1127,7 +1141,7 @@ def update_cmd(
     nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
 ) -> None:
-    """Update task metadata."""
+    """Update a task's fields, tags, dependencies or status."""
 
     def _inner() -> None:
         svc = _service(tasks_root)
@@ -1207,7 +1221,7 @@ def rename_cmd(
     nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
 ) -> None:
-    """Rename a task and update metadata."""
+    """Rename a task."""
 
     def _inner() -> None:
         svc = _service(tasks_root)
@@ -1239,7 +1253,7 @@ def delete_cmd(
     nointeractive: NoInteractiveOption = False,
     tasks_root: TasksRootOption = None,
 ) -> None:
-    """Delete a task (soft-delete to trash by default)."""
+    """Move a task to trash (--hard deletes it)."""
 
     def _inner() -> None:
         svc = _service(tasks_root)
@@ -1260,6 +1274,24 @@ def delete_cmd(
             typer.echo(f"Moved to trash: {selector}")
 
     _run_and_handle(_inner)
+
+
+def _group_help_like_picker() -> None:
+    """Show --help commands in the picker's sections (Inspect, Lifecycle, Maintenance, Setup)."""
+    def order(command) -> tuple[int, int]:
+        meta = _COMMAND_PALETTE_META.get(command.name or "")
+        if meta is None:
+            return (len(_COMMAND_SECTION_ORDER), 0)
+        return (_COMMAND_SECTION_ORDER[meta.section], meta.order)
+
+    for command in app.registered_commands:
+        meta = _COMMAND_PALETTE_META.get(command.name or "")
+        if meta is not None:
+            command.rich_help_panel = meta.section
+    app.registered_commands.sort(key=order)
+
+
+_group_help_like_picker()
 
 
 def main() -> None:

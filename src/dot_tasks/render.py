@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Iterable
 
-from .models import DependencyGraph, FieldDef, Task
+from .models import DependencyGraph, FieldDef, Task, status_label
 
 
 STATUS_ORDER = ("todo", "doing", "completed")
@@ -69,9 +69,10 @@ def _task_list_row(task: Task, unmet_count: int, field_defs: list[FieldDef]) -> 
     row = {
         "task_name": task.metadata.task_name,
         "task_id": task.metadata.task_id,
-        "status": task.metadata.status,
+        "status": status_label(task.metadata.status),
         "summary": _display(task.metadata.summary),
-        "deps": _health_label(unmet_count),
+        # Dependency health is moot once a task is done.
+        "deps": "-" if task.metadata.status == "completed" else _health_label(unmet_count),
         "created": task.metadata.date_created,
         "completed": task.metadata.date_completed or "-",
     }
@@ -202,7 +203,7 @@ def render_task_list_rich(
 
         bucket_columns = columns
         if status == "completed":
-            bucket_columns = storage.apply_done_list_defaults(columns, field_defs)
+            bucket_columns = storage.apply_done_list_columns(columns)
 
         table = Table(
             box=box.SIMPLE_HEAVY,
@@ -230,10 +231,13 @@ def render_task_list_rich(
                 name = _column_name(column)
                 value = row[name]
                 if name == "status":
-                    rendered.append(Text(value, style=_status_style(value)))
+                    rendered.append(Text(value, style=_status_style(task.metadata.status)))
                 elif name == "deps":
-                    deps_label, deps_style = _deps_rich_label(unmet_count)
-                    rendered.append(Text(deps_label, style=deps_style))
+                    if task.metadata.status == "completed":
+                        rendered.append(Text("-", style="dim"))
+                    else:
+                        deps_label, deps_style = _deps_rich_label(unmet_count)
+                        rendered.append(Text(deps_label, style=deps_style))
                 elif name in fields_by_name:
                     field_def = fields_by_name[name]
                     style = _field_style(task, field_def, today=today)
@@ -289,7 +293,7 @@ def _graph_node_parts(graph: DependencyGraph, task_id: str) -> dict[str, str | i
     return {
         "task_name": node.task_name,
         "task_id": node.task_id,
-        "status": node.status,
+        "status": status_label(node.status),
         "deps_label": _health_label(blocked),
         "blocked_count": blocked,
         "hidden_count": len(node.hidden_depends_on),
@@ -722,13 +726,9 @@ def _task_file_detail_lines_rich(task: Task):
     return [first_line, files_line]
 
 
-def _detail_field_groups(
-    field_defs: list[FieldDef],
-) -> tuple[list[FieldDef], list[FieldDef], list[FieldDef]]:
-    choices = [field_def for field_def in field_defs if field_def.type == "choice"]
-    texts = [field_def for field_def in field_defs if field_def.type == "text"]
-    dates = [field_def for field_def in field_defs if field_def.type == "date"]
-    return choices, texts, dates
+def _detail_field_pairs(task: Task, field_defs: list[FieldDef]) -> list[tuple[FieldDef, str]]:
+    """Configured fields as (definition, displayed value), in config order."""
+    return [(f, _display(task.metadata.fields.get(f.name))) for f in field_defs]
 
 
 def render_task_detail_plain(
@@ -741,32 +741,27 @@ def render_task_detail_plain(
     enable_links: bool = True,
 ) -> str:
     meta = task.metadata
-    choices, texts, dates = _detail_field_groups(field_defs or [])
-    chips = [f"[{meta.status}]"]
-    chips.extend(
-        f"[{meta.fields[f.name]}]" for f in choices if meta.fields.get(f.name) is not None
+    chips = f"[{status_label(meta.status)}]"
+    if meta.status != "completed":
+        chips += f" [deps: {_health_label(unmet_count)}]"
+    lines = [f"{meta.task_name} ({meta.task_id})", chips]
+    if meta.summary:
+        lines.append(f"summary: {meta.summary}")
+    pairs = _detail_field_pairs(task, field_defs or [])
+    if pairs:
+        lines.append("    ".join(f"{f.name}: {value}" for f, value in pairs))
+    lines.extend(
+        [
+            f"tags: {', '.join(meta.tags) if meta.tags else '-'}",
+            f"created: {meta.date_created}    started: {meta.date_started or '-'}    "
+            f"completed: {meta.date_completed or '-'}",
+            f"depends_on: {_inline_dependency_rows(dependency_rows)}",
+            f"blocks: {_inline_dependency_rows(blocks_rows)}",
+            *_task_file_detail_lines_plain(task, enable_links=enable_links),
+            "",
+            _normalized_task_body(task.body),
+        ]
     )
-    chips.append(f"[deps: {_health_label(unmet_count)}]")
-    tags = ", ".join(meta.tags) if meta.tags else "-"
-    people = [f"{f.name}: {_display(meta.fields.get(f.name))}" for f in texts]
-    date_parts = [
-        f"created: {meta.date_created}",
-        f"started: {meta.date_started or '-'}",
-        f"completed: {meta.date_completed or '-'}",
-        *(f"{f.name}: {_display(meta.fields.get(f.name))}" for f in dates),
-    ]
-    lines = [
-        f"{meta.task_name} ({meta.task_id})",
-        " ".join(chips),
-        f"summary: {_display(meta.summary)}",
-        "    ".join([*people, f"tags: {tags}"]),
-        "    ".join(date_parts),
-        f"depends_on: {_inline_dependency_rows(dependency_rows)}",
-        f"blocks: {_inline_dependency_rows(blocks_rows)}",
-        *_task_file_detail_lines_plain(task, enable_links=enable_links),
-        "",
-        _normalized_task_body(task.body),
-    ]
     return "\n".join(lines)
 
 
@@ -783,59 +778,45 @@ def render_task_detail_rich(
     from rich.text import Text
 
     meta = task.metadata
-    choices, texts, dates = _detail_field_groups(field_defs or [])
-    deps_label = _health_label(unmet_count)
-    deps_style = "green" if unmet_count <= 0 else "yellow"
 
     title = Text()
     title.append(meta.task_name, style="bold")
     title.append(f" ({meta.task_id})", style="dim")
 
     chips = Text()
-    chips.append(f"[{meta.status}]", style=_status_style(meta.status))
-    for field_def in choices:
-        value = meta.fields.get(field_def.name)
-        if value is None:
-            continue
-        chips.append(" ")
-        chips.append(f"[{value}]", style=_choice_style(field_def, value))
-    chips.append(" ")
-    chips.append("[deps: ")
-    chips.append(deps_label, style=deps_style)
-    chips.append("]")
+    chips.append(f"[{status_label(meta.status)}]", style=_status_style(meta.status))
+    if meta.status != "completed":
+        chips.append(" [deps: ")
+        chips.append(_health_label(unmet_count), style="green" if unmet_count <= 0 else "yellow")
+        chips.append("]")
 
-    summary_line = Text(f"summary: {_display(meta.summary)}")
-    tags = ", ".join(meta.tags) if meta.tags else "-"
-    people_line = Text(
-        "    ".join(
-            [*(f"{f.name}: {_display(meta.fields.get(f.name))}" for f in texts), f"tags: {tags}"]
-        )
+    lines = [title, chips]
+    if meta.summary:
+        lines.append(Text(f"summary: {meta.summary}"))
+    pairs = _detail_field_pairs(task, field_defs or [])
+    if pairs:
+        fields_line = Text()
+        for index, (field_def, value) in enumerate(pairs):
+            if index:
+                fields_line.append("    ")
+            fields_line.append(f"{field_def.name}: ")
+            fields_line.append(value, style=_field_style(task, field_def, today=today))
+        lines.append(fields_line)
+    lines.extend(
+        [
+            Text(f"tags: {', '.join(meta.tags) if meta.tags else '-'}"),
+            Text(
+                f"created: {meta.date_created}    started: {meta.date_started or '-'}    "
+                f"completed: {meta.date_completed or '-'}"
+            ),
+            Text(f"depends_on: {_inline_dependency_rows(dependency_rows)}"),
+            Text(f"blocks: {_inline_dependency_rows(blocks_rows)}"),
+            *_task_file_detail_lines_rich(task),
+            Text(""),
+            Text(_normalized_task_body(task.body)),
+        ]
     )
-    dates_line = Text(
-        f"created: {meta.date_created}    started: {meta.date_started or '-'}    "
-        f"completed: {meta.date_completed or '-'}"
-    )
-    for field_def in dates:
-        value = meta.fields.get(field_def.name)
-        dates_line.append(f"    {field_def.name}: ")
-        dates_line.append(_display(value), style=date_highlight_style(task, value, today=today))
-    depends_line = Text(f"depends_on: {_inline_dependency_rows(dependency_rows)}")
-    blocks_line = Text(f"blocks: {_inline_dependency_rows(blocks_rows)}")
-    file_lines = _task_file_detail_lines_rich(task)
-
-    body_text = Text(_normalized_task_body(task.body))
-    return Group(
-        title,
-        chips,
-        summary_line,
-        people_line,
-        dates_line,
-        depends_line,
-        blocks_line,
-        *file_lines,
-        Text(""),
-        body_text,
-    )
+    return Group(*lines)
 
 
 def render_create_success_plain(task: Task, *, enable_links: bool = True) -> str:

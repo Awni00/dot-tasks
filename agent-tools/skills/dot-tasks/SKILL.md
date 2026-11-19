@@ -36,7 +36,7 @@ dot-tasks graph                                                 # dependency gra
 dot-tasks create <task_name> summary="..." [field=value ...] [--tag <tag>] [--depends-on <task>]
                                                                 # prints the task.md path to write the description in
 dot-tasks start <task>                                          # todo -> doing (checks dependencies; --force overrides)
-dot-tasks update <task> [field=value ...] [field= ...] [--tag ...] [--depends-on ...] [--status todo|doing|completed]
+dot-tasks update <task> [field=value ...] [field= ...] [--tag ...] [--depends-on ...] [--status todo|doing|done]
 dot-tasks complete <task>                                       # -> done
 dot-tasks rename <task> <new_task_name>
 dot-tasks delete <task>                                         # move to trash (--hard deletes)

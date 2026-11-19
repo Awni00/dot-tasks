@@ -48,10 +48,9 @@ def test_resolve_list_table_columns_reads_valid_custom_columns(tmp_path: Path) -
     assert warnings == []
 
 
-def test_done_list_defaults_swap_deps_for_completed() -> None:
-    # Purpose: for the default column set, done tasks show `completed` instead of `deps`.
-    field_defs = _legacy_fields()
-    columns = storage.apply_done_list_defaults(storage.default_list_table_columns(field_defs), field_defs)
+def test_done_list_columns_swap_deps_for_completed() -> None:
+    # Purpose: for done tasks, `deps` is replaced by `completed` (dependency health is moot).
+    columns = storage.apply_done_list_columns(storage.default_list_table_columns(_legacy_fields()))
     names = storage.list_column_names(columns)
     assert "completed" in names
     assert "deps" not in names
@@ -59,10 +58,13 @@ def test_done_list_defaults_swap_deps_for_completed() -> None:
     assert completed_column["width"] == storage.FIXED_LIST_COLUMN_WIDTHS["completed"]
 
 
-def test_done_list_defaults_leave_custom_columns_alone() -> None:
-    # Purpose: a project's own column choice is never rewritten for done tasks.
+def test_done_list_columns_apply_to_custom_columns_too() -> None:
+    # Purpose: the swap also applies to a project's own column set, and is a no-op when
+    # `completed` is already shown.
     columns = [{"name": "task_name", "width": 20}, {"name": "deps", "width": 12}]
-    assert storage.apply_done_list_defaults(columns, _legacy_fields()) == columns
+    assert storage.list_column_names(storage.apply_done_list_columns(columns)) == ["task_name", "completed"]
+    with_completed = [{"name": "completed", "width": 12}, {"name": "deps", "width": 12}]
+    assert storage.apply_done_list_columns(with_completed) == with_completed
 
 
 def test_next_task_id_uses_date_prefix_and_suffix(

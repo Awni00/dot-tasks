@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import difflib
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -10,6 +11,7 @@ from .models import (
     DependencyGraph,
     DependencyGraphNode,
     FIELD_NAME_RE,
+    STATUS_ALIASES,
     STRUCTURAL_KEYS,
     TASK_NAME_RE,
     VALID_STATUSES,
@@ -231,11 +233,22 @@ class TaskService:
             }:
                 matches.append(task)
         if not matches:
-            raise TaskNotFoundError(f"Task not found: {selector}")
+            raise TaskNotFoundError(self._not_found_message(selector, include_trash))
         if len(matches) > 1:
             names = ", ".join(task.metadata.task_name for task in matches)
             raise TaskConflictError(f"Ambiguous task selector '{selector}': {names}")
         return matches[0]
+
+    def _not_found_message(self, selector: str, include_trash: bool) -> str:
+        """`Task not found`, plus up to three close task names to try."""
+        names = [task.metadata.task_name for task in storage.load_tasks(self.tasks_root, include_trash=include_trash)]
+        containing = [name for name in names if selector and selector in name]
+        close = difflib.get_close_matches(selector, names, n=3, cutoff=0.6)
+        suggestions = list(dict.fromkeys([*containing, *close]))[:3]
+        message = f"Task not found: {selector}"
+        if suggestions:
+            message += f"\nDid you mean: {', '.join(suggestions)}?"
+        return message
 
     def _ensure_unique_task_name(self, task_name: str, ignore_task_id: str | None = None) -> None:
         for task in self._load(include_trash=True):
@@ -609,7 +622,7 @@ class TaskService:
     def start_task(self, selector: str, *, force: bool = False) -> Task:
         task = self._find_by_selector(selector, include_trash=False)
         if task.metadata.status == "completed":
-            raise TaskValidationError("Cannot start a completed task")
+            raise TaskValidationError("Cannot start a done task")
 
         by_id = self._by_id(include_trash=False)
         incomplete: list[str] = []
@@ -664,8 +677,9 @@ class TaskService:
     ) -> Task:
         """Update frontmatter. *field_values* holds key=value assignments (incl. summary)."""
         task = self._find_by_selector(selector, include_trash=False)
+        status = STATUS_ALIASES.get(status, status) if status is not None else None
         if status is not None and status not in VALID_STATUSES:
-            raise TaskValidationError(f"Invalid status: {status}")
+            raise TaskValidationError(f"Invalid status: {status} (use todo, doing or done)")
         # Validate everything (assignments, dependencies, graph) before anything moves on disk.
         self._set_field_values(task.metadata, field_values or {})
         if replace_tags:

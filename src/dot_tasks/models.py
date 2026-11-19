@@ -18,6 +18,13 @@ STATUS_TO_DIR = {
     "completed": "done",
 }
 DIR_TO_STATUS = {value: key for key, value in STATUS_TO_DIR.items()}
+# Accepted status spellings on input; "done" matches the folder name and list filters.
+STATUS_ALIASES = {"done": "completed"}
+
+
+def status_label(status: str) -> str:
+    """Display name of a status: completed tasks are shown as "done" (stored value unchanged)."""
+    return "done" if status == "completed" else status
 
 # Frontmatter keys the tool attaches logic to, in the order they are written. Everything
 # else in the frontmatter (configured fields and custom keys) lives in TaskMetadata.fields.
