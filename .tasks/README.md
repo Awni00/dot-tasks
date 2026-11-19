@@ -8,7 +8,7 @@ How the dot-tasks repo tracks its own work with dot-tasks. Agents are pointed he
 - Confirm the task with the user before starting it (`dot-tasks start <task>`).
 
 ## Files in a task folder
-- `task.md`: frontmatter with a one-line `summary` (set with `summary="..."` on create/update), and the task description in the body, starting from `.tasks/templates/task.md` (`## Acceptance Criteria`). Write the body directly in the file.
+- `task.md`: frontmatter with a one-line `summary` (set with `summary="..."` on create/update), and the task description in the body, written directly in the file in whatever form suits the task.
 - `plan.md` (optional): the approved plan from plan mode, copied verbatim once the user approves it. Keep it current if the plan changes during implementation.
 - Tasks created before 0.2.0 also contain `activity.md`; leave those files as they are.
 

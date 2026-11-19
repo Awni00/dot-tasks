@@ -6,7 +6,7 @@ How this demo project tracks work with dot-tasks. Agents are pointed here from A
 - Work that needs a plan or spans more than one session.
 
 ## Files in a task folder
-- `task.md`: frontmatter with a one-line `summary` and the fields `priority`, `effort`, `owner` (set with `dot-tasks update <task> key=value`), and the description in the body, starting from `.tasks/templates/task.md` (edit directly).
+- `task.md`: frontmatter with a one-line `summary` and the fields `priority`, `effort`, `owner` (set with `dot-tasks update <task> key=value`), and the description in the body (edit directly).
 - `plan.md` (optional): the approved implementation plan, written when work starts.
 
 ## Wrapping up a session

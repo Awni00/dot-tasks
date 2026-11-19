@@ -8,7 +8,6 @@ Run commands from here to explore task lifecycle features without touching anoth
 What it contains:
 
 - `.tasks/<todo|doing|done>/…/task.md`: four sample tasks. The frontmatter holds the state (status, dates, dependencies, tags), a one-line `summary` and the fields listed in `settings.fields` of `.tasks/config.yaml` (`priority`, `effort`, `owner`); the body holds the description.
-- `.tasks/templates/task.md`: the body new tasks start from.
 - `.tasks/doing/2026-02-03-document-command-help/plan.md`: an example of a project-owned file. dot-tasks itself only writes `task.md`; which other files a task keeps is up to the project.
 - `.tasks/README.md`: the demo project's workflow doc, saying when to create tasks and which files they keep.
 - `AGENTS.md`: the canonical `dot-tasks` section, which points agents at `.tasks/README.md`.
@@ -160,7 +159,7 @@ dot-tasks delete prepare-v1-release-notes
 dot-tasks list --json
 ```
 
-`create` prints the path of the new `task.md`; write the description in its body (it starts from `.tasks/templates/task.md`).
+`create` prints the path of the new `task.md`; write the description in its body.
 
 Expected snippet:
 

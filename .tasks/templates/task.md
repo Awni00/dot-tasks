@@ -1,2 +1,0 @@
-## Acceptance Criteria
-- TODO
